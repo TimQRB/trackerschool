@@ -67,6 +67,9 @@ class DeviceCreate(BaseModel):
 class DeviceOut(BaseModel):
     id: int
     identifier: str
+    imei: str | None = None
+    dev_type: str | None = None
+    model_name: str | None = None
     student_id: int | None
     api_key: str
     last_seen_at: datetime | None
@@ -96,6 +99,26 @@ class GeofenceOut(BaseModel):
 
 
 # --- Locations ---
+
+class ContactCreate(BaseModel):
+    device_id: int
+    contact_type: str  # family | sos | whitelist
+    number: str
+    display_name: str
+    serial_no: int = 0
+
+
+class ContactOut(BaseModel):
+    id: int
+    device_id: int
+    contact_type: str
+    number: str
+    display_name: str
+    serial_no: int
+
+    class Config:
+        from_attributes = True
+
 
 class LocationIngest(BaseModel):
     lat: float

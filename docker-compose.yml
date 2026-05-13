@@ -34,6 +34,28 @@ services:
     volumes:
       - ./backend:/app
 
+  gateway:
+    build: ./backend
+    command: python -m gateway.main
+    environment:
+      DATABASE_URL: postgresql+psycopg://safemektep:safemektep@db:5432/safemektep
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: change-me-in-prod
+      REG_PORT: "13000"
+      SVC_PORT: "13001"
+      PUBLIC_HOST: gateway
+      PUBLIC_SVC_PORT: "13001"
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    ports:
+      - "13000:13000"
+      - "13001:13001"
+    volumes:
+      - ./backend:/app
+
   frontend:
     build: ./frontend
     ports:

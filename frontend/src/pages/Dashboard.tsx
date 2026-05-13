@@ -135,6 +135,23 @@ export default function Dashboard({ user, onLogout }: Props) {
                   ? `Заряд: ${point.battery ?? "—"}% • ${new Date(point.recorded_at).toLocaleTimeString()}`
                   : "Нет данных"}
               </div>
+              {student.device && (
+                <button
+                  className="btn-secondary"
+                  style={{ marginTop: 8, padding: "4px 8px", fontSize: 12 }}
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    try {
+                      const r = await api.locateNow(student.device!.id);
+                      if (!r.ok) alert(r.reason || "Устройство не на связи");
+                    } catch (err: any) {
+                      alert("Ошибка: " + err.message);
+                    }
+                  }}
+                >
+                  📍 Найти сейчас
+                </button>
+              )}
             </div>
           ))}
 

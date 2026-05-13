@@ -18,6 +18,13 @@ def init() -> None:
 
     Base.metadata.create_all(engine)
 
+    # idempotent column additions (no Alembic in MVP)
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE devices ADD COLUMN IF NOT EXISTS imei VARCHAR(32) UNIQUE"))
+        conn.execute(text("ALTER TABLE devices ADD COLUMN IF NOT EXISTS dev_type VARCHAR(16)"))
+        conn.execute(text("ALTER TABLE devices ADD COLUMN IF NOT EXISTS model_name VARCHAR(32)"))
+        conn.commit()
+
     db = SessionLocal()
     try:
         admin = db.execute(select(User).where(User.email == settings.admin_email)).scalar_one_or_none()
@@ -67,10 +74,19 @@ def init() -> None:
         if not device:
             device = Device(
                 identifier="DEMO-001",
+                imei="865687062604820",
+                dev_type="1032",
+                model_name="HC02",
                 student_id=student.id,
                 api_key="demo-key-please-change-" + secrets.token_urlsafe(8),
             )
             db.add(device)
+            db.commit()
+            db.refresh(device)
+        elif not device.imei:
+            device.imei = "865687062604820"
+            device.dev_type = "1032"
+            device.model_name = "HC02"
             db.commit()
             db.refresh(device)
 
@@ -118,6 +134,7 @@ def init() -> None:
         print(f"Админ:    {settings.admin_email} / {settings.admin_password}")
         print("Школа:    school@safemektep.kz / school123")
         print("Родитель: parent@safemektep.kz / parent123")
+        print(f"Устройство DEMO-001 IMEI: {device.imei}")
         print(f"Устройство DEMO-001 API key: {device.api_key}")
         print("=" * 60)
     finally:

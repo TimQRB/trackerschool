@@ -1,7 +1,7 @@
 """Geofence checks via PostGIS + transition detection."""
 from datetime import datetime, timezone
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .models import (
@@ -37,8 +37,12 @@ def check_transitions(
 
     for fence in fences:
         is_inside = db.execute(
-            text("SELECT ST_Covers(:poly, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326))"),
-            {"poly": fence.polygon, "lon": lon, "lat": lat},
+            select(
+                func.ST_Covers(
+                    fence.polygon,
+                    func.ST_SetSRID(func.ST_MakePoint(lon, lat), 4326),
+                )
+            )
         ).scalar()
 
         state = db.execute(

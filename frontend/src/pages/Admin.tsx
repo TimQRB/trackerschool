@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, Device, Geofence, Student, User } from "../api";
+import { api, Contact, Device, Geofence, Student, User } from "../api";
 
 interface Props {
   user: User;
   onLogout: () => void;
 }
 
-type Tab = "students" | "devices" | "geofences" | "users";
+type Tab = "students" | "devices" | "geofences" | "contacts" | "users";
 
 export default function Admin({ user, onLogout }: Props) {
   const [tab, setTab] = useState<Tab>("students");
@@ -34,6 +34,9 @@ export default function Admin({ user, onLogout }: Props) {
           <button className={tab === "geofences" ? "active" : ""} onClick={() => setTab("geofences")}>
             Геозоны
           </button>
+          <button className={tab === "contacts" ? "active" : ""} onClick={() => setTab("contacts")}>
+            Контакты
+          </button>
           {user.role === "admin" && (
             <button className={tab === "users" ? "active" : ""} onClick={() => setTab("users")}>
               Пользователи
@@ -45,6 +48,7 @@ export default function Admin({ user, onLogout }: Props) {
           {tab === "students" && <StudentsTab />}
           {tab === "devices" && <DevicesTab isAdmin={user.role === "admin"} />}
           {tab === "geofences" && <GeofencesTab />}
+          {tab === "contacts" && <ContactsTab />}
           {tab === "users" && <UsersTab />}
         </div>
       </div>
@@ -303,6 +307,154 @@ function GeofencesTab() {
         </div>
         <button className="btn-primary" type="submit">Создать</button>
       </form>
+    </div>
+  );
+}
+
+const CONTACT_TYPE_LABEL: Record<string, string> = {
+  family: "Семейный (один клик)",
+  sos: "SOS",
+  whitelist: "Белый список",
+};
+
+function ContactsTab() {
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [deviceId, setDeviceId] = useState<number | "">("");
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [contactType, setContactType] = useState("family");
+  const [number, setNumber] = useState("");
+  const [displayName, setDisplayName] = useState("");
+
+  async function loadDevices() {
+    setDevices(await api.listDevices());
+  }
+
+  async function loadContacts(id: number) {
+    setContacts(await api.listContacts(id));
+  }
+
+  useEffect(() => {
+    loadDevices();
+  }, []);
+
+  useEffect(() => {
+    if (typeof deviceId === "number") loadContacts(deviceId);
+    else setContacts([]);
+  }, [deviceId]);
+
+  async function add(e: React.FormEvent) {
+    e.preventDefault();
+    if (typeof deviceId !== "number") return;
+    const sameType = contacts.filter((c) => c.contact_type === contactType);
+    await api.createContact({
+      device_id: deviceId,
+      contact_type: contactType,
+      number,
+      display_name: displayName,
+      serial_no: sameType.length + 1,
+    });
+    setNumber("");
+    setDisplayName("");
+    loadContacts(deviceId);
+  }
+
+  async function remove(id: number) {
+    if (!confirm("Удалить контакт? Изменение применится к устройству.")) return;
+    await api.deleteContact(id);
+    if (typeof deviceId === "number") loadContacts(deviceId);
+  }
+
+  const groups: Record<string, Contact[]> = { family: [], sos: [], whitelist: [] };
+  contacts.forEach((c) => groups[c.contact_type]?.push(c));
+
+  return (
+    <div>
+      <h3>Контакты устройства</h3>
+      <p style={{ color: "#64748b", fontSize: 13 }}>
+        После изменения список автоматически отправляется на устройство (если оно на связи)
+        командой 0x03D0 по TCP-протоколу HC02.
+      </p>
+
+      <div className="form-row" style={{ maxWidth: 400 }}>
+        <label>Устройство</label>
+        <select
+          value={deviceId}
+          onChange={(e) => setDeviceId(e.target.value ? Number(e.target.value) : "")}
+        >
+          <option value="">— выбрать —</option>
+          {devices.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.identifier} {d.imei ? `(IMEI ${d.imei})` : ""}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {typeof deviceId === "number" && (
+        <>
+          {(["family", "sos", "whitelist"] as const).map((t) => (
+            <div key={t} style={{ marginTop: 16 }}>
+              <h4>{CONTACT_TYPE_LABEL[t]}</h4>
+              {groups[t].length === 0 ? (
+                <div style={{ color: "#64748b", fontSize: 13 }}>Пока пусто</div>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ background: "#f1f5f9", textAlign: "left" }}>
+                      <th style={{ padding: 6 }}>#</th>
+                      <th style={{ padding: 6 }}>Имя</th>
+                      <th style={{ padding: 6 }}>Номер</th>
+                      <th style={{ padding: 6 }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groups[t].map((c) => (
+                      <tr key={c.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
+                        <td style={{ padding: 6 }}>{c.serial_no}</td>
+                        <td style={{ padding: 6 }}>{c.display_name}</td>
+                        <td style={{ padding: 6, fontFamily: "monospace" }}>{c.number}</td>
+                        <td style={{ padding: 6 }}>
+                          <button onClick={() => remove(c.id)} style={{ color: "#dc2626" }}>
+                            удалить
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          ))}
+
+          <form onSubmit={add} style={{ marginTop: 20, maxWidth: 400 }}>
+            <h4>Добавить контакт</h4>
+            <div className="form-row">
+              <label>Тип</label>
+              <select value={contactType} onChange={(e) => setContactType(e.target.value)}>
+                <option value="family">Семейный (один клик)</option>
+                <option value="sos">SOS</option>
+                <option value="whitelist">Белый список</option>
+              </select>
+            </div>
+            <div className="form-row">
+              <label>Имя (как покажется на устройстве)</label>
+              <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} required />
+            </div>
+            <div className="form-row">
+              <label>Номер телефона</label>
+              <input
+                value={number}
+                onChange={(e) => setNumber(e.target.value)}
+                placeholder="+77001234567"
+                required
+              />
+            </div>
+            <button className="btn-primary" type="submit">
+              Сохранить и отправить на устройство
+            </button>
+          </form>
+        </>
+      )}
     </div>
   );
 }

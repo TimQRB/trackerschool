@@ -100,6 +100,11 @@ export const api = {
     request<Device>("/api/devices", { method: "POST", body: JSON.stringify(data) }),
   assignDevice: (deviceId: number, studentId: number) =>
     request<Device>(`/api/devices/${deviceId}/assign/${studentId}`, { method: "POST" }),
+  locateNow: (deviceId: number) =>
+    request<{ ok: boolean; reason?: string; task_id: string }>(
+      `/api/devices/${deviceId}/locate-now`,
+      { method: "POST" },
+    ),
 
   listGeofences: () => request<Geofence[]>("/api/geofences"),
   createGeofence: (data: {
@@ -121,7 +126,27 @@ export const api = {
   createUser: (data: { email: string; password: string; full_name: string; role: string }) =>
     request<User>("/api/users", { method: "POST", body: JSON.stringify(data) }),
   listUsers: () => request<User[]>("/api/users"),
+
+  listContacts: (deviceId: number) =>
+    request<Contact[]>(`/api/contacts?device_id=${deviceId}`),
+  createContact: (data: {
+    device_id: number;
+    contact_type: string;
+    number: string;
+    display_name: string;
+    serial_no: number;
+  }) => request<Contact>("/api/contacts", { method: "POST", body: JSON.stringify(data) }),
+  deleteContact: (id: number) => request<void>(`/api/contacts/${id}`, { method: "DELETE" }),
 };
+
+export interface Contact {
+  id: number;
+  device_id: number;
+  contact_type: "family" | "sos" | "whitelist";
+  number: string;
+  display_name: string;
+  serial_no: number;
+}
 
 export function setToken(token: string) {
   localStorage.setItem("token", token);

@@ -32,6 +32,19 @@ class ZoneType(str, Enum):
     ROUTE = "route"
 
 
+class ContactType(str, Enum):
+    FAMILY = "family"  # vendor type 1
+    SOS = "sos"        # vendor type 2
+    WHITELIST = "whitelist"  # vendor type 3
+
+
+CONTACT_TYPE_TO_VENDOR = {
+    ContactType.FAMILY.value: 1,
+    ContactType.SOS.value: 2,
+    ContactType.WHITELIST.value: 3,
+}
+
+
 class EventType(str, Enum):
     ENTER_ZONE = "enter_zone"
     EXIT_ZONE = "exit_zone"
@@ -77,6 +90,9 @@ class Device(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     identifier: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    imei: Mapped[str | None] = mapped_column(String(32), unique=True, index=True, nullable=True)
+    dev_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String(32), nullable=True)
     student_id: Mapped[int | None] = mapped_column(ForeignKey("students.id"), nullable=True)
     api_key: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -123,6 +139,19 @@ class Event(Base):
     lon: Mapped[float | None] = mapped_column(Float, nullable=True)
     acknowledged: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class Contact(Base):
+    """Phone contact configured on a device: family / SOS / whitelist."""
+    __tablename__ = "contacts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), index=True)
+    contact_type: Mapped[str] = mapped_column(String(16))  # family | sos | whitelist
+    number: Mapped[str] = mapped_column(String(32))
+    display_name: Mapped[str] = mapped_column(String(64))
+    serial_no: Mapped[int] = mapped_column(Integer, default=0)  # order within type (1..3 for family/sos)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class DeviceZoneState(Base):

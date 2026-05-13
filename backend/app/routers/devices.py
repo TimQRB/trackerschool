@@ -1,4 +1,5 @@
 import secrets
+import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -6,9 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
+from ..device_commands import send_command
 from ..models import Device, Role, Student, User
 from ..schemas import DeviceCreate, DeviceOut
-from ..security import require_roles
+from ..security import get_current_user, require_roles
 
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
@@ -45,6 +47,30 @@ def create_device(
     db.commit()
     db.refresh(device)
     return device
+
+
+@router.post("/{device_id}/locate-now")
+def locate_now(
+    device_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """Push 0x03DD Immediate Location command to the device through the gateway."""
+    device = db.get(Device, device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Устройство не найдено")
+    if user.role == Role.PARENT.value:
+        student = db.get(Student, device.student_id) if device.student_id else None
+        if not student or student.parent_id != user.id:
+            raise HTTPException(status_code=403, detail="Forbidden")
+    if not device.imei:
+        raise HTTPException(status_code=400, detail="У устройства не задан IMEI")
+
+    task_id = f"loc-{int(time.time() * 1000)}"
+    subscribers = send_command(device.imei, 0x03DD, {"req": {"taskId": task_id}})
+    if subscribers == 0:
+        return {"ok": False, "reason": "Устройство сейчас не на связи", "task_id": task_id}
+    return {"ok": True, "task_id": task_id}
 
 
 @router.post("/{device_id}/assign/{student_id}", response_model=DeviceOut)

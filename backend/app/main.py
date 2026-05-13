@@ -6,7 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import bus
 from .init_db import init
-from .routers import auth, devices, events, geofences, locations, students, users, ws
+from .routers import auth, contacts, devices, events, geofences, locations, students, users, ws
+from .routers import device_config
 
 
 @asynccontextmanager
@@ -33,6 +34,8 @@ app.include_router(devices.router)
 app.include_router(geofences.router)
 app.include_router(locations.router)
 app.include_router(events.router)
+app.include_router(contacts.router)
+app.include_router(device_config.router)
 app.include_router(ws.router)
 
 
