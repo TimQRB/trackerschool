@@ -1,0 +1,147 @@
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, EmailStr, Field
+
+
+# --- Auth ---
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    role: str
+    full_name: str
+    user_id: int
+
+
+# --- Users ---
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str
+    full_name: str
+    role: str  # parent | school | admin
+
+
+class UserOut(BaseModel):
+    id: int
+    email: str
+    full_name: str
+    role: str
+
+    class Config:
+        from_attributes = True
+
+
+# --- Students ---
+
+class StudentCreate(BaseModel):
+    full_name: str
+    class_name: str
+    parent_id: int | None = None
+
+
+class StudentOut(BaseModel):
+    id: int
+    full_name: str
+    class_name: str
+    parent_id: int | None
+    device: "DeviceOut | None" = None
+
+    class Config:
+        from_attributes = True
+
+
+# --- Devices ---
+
+class DeviceCreate(BaseModel):
+    identifier: str
+    student_id: int | None = None
+
+
+class DeviceOut(BaseModel):
+    id: int
+    identifier: str
+    student_id: int | None
+    api_key: str
+    last_seen_at: datetime | None
+    last_battery: int | None
+    is_active: bool
+
+    class Config:
+        from_attributes = True
+
+
+# --- Geofences ---
+
+class GeofenceCreate(BaseModel):
+    name: str
+    zone_type: str  # school | home | route
+    # GeoJSON-like polygon coords: [[lon, lat], ...] — first and last must match
+    coordinates: list[list[float]] = Field(..., min_length=4)
+    student_id: int | None = None
+
+
+class GeofenceOut(BaseModel):
+    id: int
+    name: str
+    zone_type: str
+    student_id: int | None
+    coordinates: list[list[float]]
+
+
+# --- Locations ---
+
+class LocationIngest(BaseModel):
+    lat: float
+    lon: float
+    accuracy: float | None = None
+    speed: float | None = None
+    battery: int | None = None
+    sos: bool = False
+
+
+class LocationOut(BaseModel):
+    id: int
+    device_id: int
+    lat: float
+    lon: float
+    battery: int | None
+    speed: float | None
+    recorded_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# --- Events ---
+
+class EventOut(BaseModel):
+    id: int
+    student_id: int
+    event_type: str
+    severity: str
+    geofence_id: int | None
+    message: str
+    lat: float | None
+    lon: float | None
+    acknowledged: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# --- WebSocket payloads ---
+
+class WSMessage(BaseModel):
+    type: str  # "location" | "event"
+    payload: dict[str, Any]
+
+
+StudentOut.model_rebuild()
