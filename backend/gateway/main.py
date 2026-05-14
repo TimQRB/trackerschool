@@ -13,7 +13,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import redis.asyncio as aioredis
 from sqlalchemy import select
@@ -244,7 +244,7 @@ def _handle_position(db, device: Device, body: dict) -> None:
                 student_id=student.id,
                 title="Низкий заряд батареи",
                 body=evt.message,
-                data={"type": "low_battery", "student_id": str(student.id), "battery": str(battery)},
+                data={"type": "low_battery", "student_id": str(student.id), "battery": str(battery or "")},
             )
 
 
@@ -324,6 +324,46 @@ def _handle_heartbeat(db, device: Device, body: dict) -> None:
         except ValueError: battery = None
     if isinstance(battery, int):
         device.last_battery = battery
+
+    if isinstance(battery, int) and battery <= 15 and device.student_id:
+        recent = db.execute(
+            select(Event).where(
+                Event.student_id == device.student_id,
+                Event.event_type == EventType.LOW_BATTERY.value,
+                Event.created_at > datetime.now(timezone.utc) - timedelta(hours=1),
+            )
+        ).first()
+        if not recent:
+            student = db.get(Student, device.student_id)
+            if student:
+                evt = Event(
+                    student_id=device.student_id,
+                    event_type=EventType.LOW_BATTERY.value,
+                    severity=Severity.WARNING.value,
+                    message=f"Низкий заряд устройства ученика {student.full_name}: {battery}%",
+                )
+                db.add(evt)
+                db.flush()
+                publish({
+                    "type": "event",
+                    "payload": {
+                        "id": evt.id,
+                        "student_id": evt.student_id,
+                        "student_name": student.full_name,
+                        "event_type": evt.event_type,
+                        "severity": evt.severity,
+                        "message": evt.message,
+                        "lat": None,
+                        "lon": None,
+                        "created_at": evt.created_at.isoformat(),
+                    },
+                })
+                send_push_to_parents(
+                    student_id=device.student_id,
+                    title="Низкий заряд батареи",
+                    body=evt.message,
+                    data={"type": "low_battery", "student_id": str(device.student_id), "battery": str(battery)},
+                )
     db.commit()
 
 

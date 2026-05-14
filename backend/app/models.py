@@ -200,4 +200,4 @@ class CallLog(Base):
     number: Mapped[str] = mapped_column(String(32))
     direction: Mapped[str] = mapped_column(String(16))  # incoming | outgoing
     duration: Mapped[int] = mapped_column(Integer, default=0)
-    called_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    called_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

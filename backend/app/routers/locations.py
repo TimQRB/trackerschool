@@ -134,7 +134,7 @@ def ingest(
                 student_id=student.id,
                 title="Низкий заряд батареи",
                 body=evt.message,
-                data={"type": "low_battery", "student_id": str(student.id), "battery": str(payload.battery)},
+                data={"type": "low_battery", "student_id": str(student.id), "battery": str(payload.battery or "")},
             )
 
     return {"ok": True, "events_created": len(new_events)}
