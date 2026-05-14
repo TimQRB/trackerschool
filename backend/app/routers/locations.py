@@ -9,6 +9,7 @@ from ..bus import publish
 from ..database import get_db
 from ..geofence_service import check_transitions
 from ..models import Device, Event, EventType, LocationPoint, Role, Severity, Student, User
+from ..notify import send_push_to_parents
 from ..schemas import LocationIngest, LocationOut
 from ..security import get_current_user
 
@@ -113,6 +114,28 @@ def ingest(
                 "created_at": evt.created_at.isoformat(),
             },
         })
+
+        if evt.event_type == EventType.SOS.value:
+            send_push_to_parents(
+                student_id=student.id,
+                title="SOS! Тревога",
+                body=evt.message,
+                data={"type": "sos", "student_id": str(student.id), "lat": str(evt.lat), "lon": str(evt.lon)},
+            )
+        elif evt.event_type in (EventType.ENTER_ZONE.value, EventType.EXIT_ZONE.value):
+            send_push_to_parents(
+                student_id=student.id,
+                title="Уведомление о геозоне",
+                body=evt.message,
+                data={"type": "geofence", "student_id": str(student.id)},
+            )
+        elif evt.event_type == EventType.LOW_BATTERY.value:
+            send_push_to_parents(
+                student_id=student.id,
+                title="Низкий заряд батареи",
+                body=evt.message,
+                data={"type": "low_battery", "student_id": str(student.id), "battery": str(payload.battery)},
+            )
 
     return {"ok": True, "events_created": len(new_events)}
 

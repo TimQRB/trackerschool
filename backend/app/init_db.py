@@ -23,6 +23,7 @@ def init() -> None:
         conn.execute(text("ALTER TABLE devices ADD COLUMN IF NOT EXISTS imei VARCHAR(32) UNIQUE"))
         conn.execute(text("ALTER TABLE devices ADD COLUMN IF NOT EXISTS dev_type VARCHAR(16)"))
         conn.execute(text("ALTER TABLE devices ADD COLUMN IF NOT EXISTS model_name VARCHAR(32)"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS fcm_token VARCHAR(512)"))
         conn.commit()
 
     db = SessionLocal()

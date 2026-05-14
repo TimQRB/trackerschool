@@ -1,9 +1,10 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
 
 from geoalchemy2 import Geometry
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -67,6 +68,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     full_name: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(32))
+    fcm_token: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     students: Mapped[list["Student"]] = relationship(back_populates="parent")
@@ -163,3 +165,39 @@ class DeviceZoneState(Base):
     geofence_id: Mapped[int] = mapped_column(ForeignKey("geofences.id"), index=True)
     is_inside: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class HealthRecord(Base):
+    """Heart rate, SpO2, steps reported by device."""
+    __tablename__ = "health_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), index=True)
+    heart_rate: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    spo2: Mapped[float | None] = mapped_column(Float, nullable=True)
+    steps: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class AttendanceLog(Base):
+    """School attendance: enter/exit times for each student per day."""
+    __tablename__ = "attendance_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id"), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    enter_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    exit_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="present")
+
+
+class CallLog(Base):
+    """Call history reported by device (protocol 0x0312)."""
+    __tablename__ = "call_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), index=True)
+    number: Mapped[str] = mapped_column(String(32))
+    direction: Mapped[str] = mapped_column(String(16))  # incoming | outgoing
+    duration: Mapped[int] = mapped_column(Integer, default=0)
+    called_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

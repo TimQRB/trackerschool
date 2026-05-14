@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import bus
 from .init_db import init
 from .routers import auth, contacts, devices, events, geofences, locations, students, users, ws
-from .routers import device_config
+from .routers import attendance, commands, device_config, health, notifications
 
 
 @asynccontextmanager
@@ -37,6 +37,10 @@ app.include_router(events.router)
 app.include_router(contacts.router)
 app.include_router(device_config.router)
 app.include_router(ws.router)
+app.include_router(notifications.router)
+app.include_router(attendance.router)
+app.include_router(commands.router)
+app.include_router(health.router)
 
 
 @app.get("/api/health")

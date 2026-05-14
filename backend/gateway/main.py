@@ -22,12 +22,26 @@ from app.bus import publish, set_loop
 from app.config import settings
 from app.database import SessionLocal
 from app.geofence_service import check_transitions
-from app.models import Device, Event, EventType, LocationPoint, Severity, Student
+from app.notify import send_push_to_parents
+from app.models import (
+    AttendanceLog,
+    CallLog,
+    Device,
+    Event,
+    EventType,
+    HealthRecord,
+    LocationPoint,
+    Severity,
+    Student,
+)
 
 from .protocol import (
     Frame,
     P_ALARM,
+    P_BLOOD_OXYGEN,
+    P_CALL_LOG,
     P_HEARTBEAT,
+    P_HEART_RATE,
     P_IMMEDIATE_LOC,
     P_LINK,
     P_POSITION,
@@ -211,6 +225,28 @@ def _handle_position(db, device: Device, body: dict) -> None:
             },
         })
 
+        if evt.event_type == EventType.SOS.value:
+            send_push_to_parents(
+                student_id=student.id,
+                title="SOS! Тревога",
+                body=evt.message,
+                data={"type": "sos", "student_id": str(student.id), "lat": str(evt.lat), "lon": str(evt.lon)},
+            )
+        elif evt.event_type in (EventType.ENTER_ZONE.value, EventType.EXIT_ZONE.value):
+            send_push_to_parents(
+                student_id=student.id,
+                title="Уведомление о геозоне",
+                body=evt.message,
+                data={"type": "geofence", "student_id": str(student.id)},
+            )
+        elif evt.event_type == EventType.LOW_BATTERY.value:
+            send_push_to_parents(
+                student_id=student.id,
+                title="Низкий заряд батареи",
+                body=evt.message,
+                data={"type": "low_battery", "student_id": str(student.id), "battery": str(battery)},
+            )
+
 
 def _handle_alarm(db, device: Device, body: dict) -> None:
     """0x03DB — alarms (1=power on, 2=power off, 3=SOS)."""
@@ -270,6 +306,14 @@ def _handle_alarm(db, device: Device, body: dict) -> None:
         },
     })
 
+    if alarm_type == 3:
+        send_push_to_parents(
+            student_id=student.id,
+            title="SOS! Тревога",
+            body=msg,
+            data={"type": "sos", "student_id": str(student.id), "lat": str(lat), "lon": str(lon)},
+        )
+
 
 def _handle_heartbeat(db, device: Device, body: dict) -> None:
     """0x03DC — heartbeat with battery."""
@@ -281,6 +325,82 @@ def _handle_heartbeat(db, device: Device, body: dict) -> None:
     if isinstance(battery, int):
         device.last_battery = battery
     db.commit()
+
+
+def _handle_heart_rate(db, device: Device, body: dict) -> None:
+    """0x105E — heart rate + step data upload."""
+    heart_rate = body.get("heartRate")
+    steps = body.get("step")
+    if heart_rate is None and steps is None:
+        return
+    try:
+        heart_rate = int(heart_rate) if heart_rate is not None else None
+        steps = int(steps) if steps is not None else None
+    except (TypeError, ValueError):
+        return
+
+    rec = HealthRecord(
+        device_id=device.id,
+        heart_rate=heart_rate,
+        steps=steps,
+    )
+    db.add(rec)
+    db.commit()
+    log.info("heart-rate imei=%s heart_rate=%s steps=%s", device.imei, heart_rate, steps)
+
+
+def _handle_blood_oxygen(db, device: Device, body: dict) -> None:
+    """0x1063 — blood oxygen (SpO2) data upload."""
+    value = body.get("value")
+    if value is None:
+        return
+    try:
+        spo2 = float(value)
+    except (TypeError, ValueError):
+        return
+
+    rec = HealthRecord(
+        device_id=device.id,
+        spo2=spo2,
+    )
+    db.add(rec)
+    db.commit()
+    log.info("blood-oxygen imei=%s spo2=%s", device.imei, spo2)
+
+
+def _handle_call_log(db, device: Device, body: dict) -> None:
+    """0x0312 — call record report from device."""
+    number = body.get("number", "")
+    direction_raw = body.get("direction", "1")
+    duration = body.get("duration", 0)
+    time_str = body.get("time", "")
+
+    direction = "outgoing" if direction_raw == "1" else "incoming"
+    try:
+        duration = int(duration)
+    except (TypeError, ValueError):
+        duration = 0
+
+    called_at = datetime.now(timezone.utc)
+    if time_str:
+        try:
+            called_at = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        except ValueError:
+            try:
+                called_at = datetime.strptime(time_str, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
+
+    log_entry = CallLog(
+        device_id=device.id,
+        number=number,
+        direction=direction,
+        duration=duration,
+        called_at=called_at,
+    )
+    db.add(log_entry)
+    db.commit()
+    log.info("call-log imei=%s number=%s dir=%s dur=%s", device.imei, number, direction, duration)
 
 
 async def svc_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
@@ -353,6 +473,33 @@ async def svc_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
                         device = db.execute(select(Device).where(Device.imei == imei)).scalar_one()
                         _handle_position(db, device, res)
                 log.info("svc: imei=%s immediate-location reply", imei)
+
+            elif frame.proto_type == P_HEART_RATE:
+                if imei:
+                    with SessionLocal() as db:
+                        device = db.execute(select(Device).where(Device.imei == imei)).scalar_one()
+                        _handle_heart_rate(db, device, req)
+                writer.write(Frame(P_HEART_RATE, {"res": {"result": 1}}).encode())
+                await writer.drain()
+                log.info("svc: imei=%s heart-rate upload", imei)
+
+            elif frame.proto_type == P_BLOOD_OXYGEN:
+                if imei:
+                    with SessionLocal() as db:
+                        device = db.execute(select(Device).where(Device.imei == imei)).scalar_one()
+                        _handle_blood_oxygen(db, device, req)
+                writer.write(Frame(P_BLOOD_OXYGEN, {"res": {"result": 1}}).encode())
+                await writer.drain()
+                log.info("svc: imei=%s blood-oxygen upload", imei)
+
+            elif frame.proto_type == P_CALL_LOG:
+                if imei:
+                    with SessionLocal() as db:
+                        device = db.execute(select(Device).where(Device.imei == imei)).scalar_one()
+                        _handle_call_log(db, device, req)
+                writer.write(Frame(P_CALL_LOG, {"res": {"result": 1}}).encode())
+                await writer.drain()
+                log.info("svc: imei=%s call-log upload", imei)
 
             else:
                 log.info("svc: imei=%s unhandled proto 0x%04x payload=%s",
