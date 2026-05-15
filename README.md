@@ -1,6 +1,6 @@
 # SafeMektep — MVP
 
-Система отслеживания геопозиции школьников. MVP без мобильного приложения: родитель и школа работают через веб.
+Система отслеживания геопозиции школьников. Родители используют мобильное приложение (Expo/React Native), школа работает через веб.
 
 ## Стек
 
@@ -9,6 +9,7 @@
 | Backend | Python 3.12 + FastAPI + WebSocket |
 | БД | PostgreSQL 16 + PostGIS 3.4 |
 | Frontend | React 18 + TypeScript + Vite + Leaflet |
+| Mobile | React Native (Expo 54) + TypeScript + react-native-maps |
 | Симулятор устройства | Python (HTTP POST) |
 | Запуск | Docker Compose |
 
@@ -38,6 +39,32 @@ docker compose up --build
 | Администратор | `admin@safemektep.kz` | `admin123` |
 | Школа | `school@safemektep.kz` | `school123` |
 | Родитель | `parent@safemektep.kz` | `parent123` |
+
+## Мобильное приложение
+
+React Native (Expo 54) приложение для родителей и школы.
+
+```bash
+cd mobile
+npm install
+npx expo start
+```
+
+Сканируй QR-код через Expo Go (Android/iOS) или запусти на эмуляторе:
+- **Android эмулятор**: `npx expo start` → `a`
+- **Локально**: IP сервера определяется автоматически через `expo-constants`
+
+Настройки подключения к бэкенду — `mobile/.env`:
+```
+EXPO_PUBLIC_API_URL=http://192.168.8.100:8080
+EXPO_PUBLIC_WS_URL=ws://192.168.8.100:8080
+```
+
+Для push-уведомлений и production сборки нужен development build:
+```bash
+npx expo prebuild
+npx expo run:android
+```
 
 ## Запуск симулятора устройства
 
@@ -70,7 +97,6 @@ python simulate.py --api-key <API_KEY_из_логов_backend>
 ## Что осталось «на будущее»
 
 - Уведомления (Telegram-бот / push / email)
-- Мобильное приложение (React Native / Flutter / PWA)
 - AI-модуль (отклонение от маршрута, аномалии в движении)
 - Реальное устройство (ESP32 + GPS + GSM/NB-IoT, MQTT)
 - Журнал посещаемости
@@ -99,6 +125,17 @@ trecker/
 │       ├── useLiveBus.ts
 │       ├── components/MapView.tsx
 │       └── pages/
+├── mobile/              # React Native (Expo) приложение
+│   ├── App.tsx
+│   ├── src/
+│   │   ├── api/
+│   │   ├── components/
+│   │   ├── context/
+│   │   ├── hooks/
+│   │   ├── navigation/
+│   │   ├── screens/
+│   │   └── utils/
+│   └── app.json
 └── simulator/
     └── simulate.py
 ```

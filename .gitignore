@@ -8,7 +8,6 @@ dist/
 .env.local
 *.log
 .DS_Store
-/mobile/
 *.docx
 *.doc
 *.pptx
