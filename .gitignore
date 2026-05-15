@@ -9,3 +9,8 @@ dist/
 *.log
 .DS_Store
 /mobile/
+*.docx
+*.doc
+*.pptx
+*.pdf
+MOBILE_APP_SPEC.md
