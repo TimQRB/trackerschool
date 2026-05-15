@@ -29,7 +29,11 @@ export default function BatchCommandsScreen() {
     try {
       const res = await batchCommand(allIds, command, payload || {});
       const sent = res.results.filter((r) => r.sent).length;
-      Alert.alert('Готово', `Команда отправлена на ${sent} из ${res.results.length} устройств`);
+      if (sent === 0) {
+        Alert.alert('Ошибка', 'Устройства не на связи. Команда не доставлена.');
+      } else {
+        Alert.alert('Готово', `Команда отправлена на ${sent} из ${res.results.length} устройств`);
+      }
     } catch (e: any) {
       Alert.alert('Ошибка', e.response?.data?.detail || e.message);
     } finally {

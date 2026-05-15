@@ -57,7 +57,11 @@ export default function SettingsScreen() {
       });
       const results = res.data.results || [];
       const sent = results.filter((r: any) => r.sent).length;
-      Alert.alert('Готово', `Команда отправлена на ${sent} устройств(а)`);
+      if (sent === 0) {
+        Alert.alert('Ошибка', 'Устройство не на связи. Команда не доставлена.');
+      } else {
+        Alert.alert('Готово', `Команда отправлена на ${sent} устройств(а)`);
+      }
     } catch (e: any) {
       Alert.alert('Ошибка', e.response?.data?.detail || e.message);
     } finally {
