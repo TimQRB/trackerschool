@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState} from "react";
 import L from "leaflet";
 import { Geofence, LocationPoint, Student } from "../api";
 
@@ -13,6 +13,7 @@ interface Props {
   geofences: Geofence[];
   selectedStudentId: number | null;
   center?: [number, number];
+  focusTrigger?: number;
 }
 
 const ZONE_COLORS: Record<string, string> = {
@@ -21,10 +22,14 @@ const ZONE_COLORS: Record<string, string> = {
   route: "#f59e0b",
 };
 
-export default function MapView({ students, geofences, selectedStudentId, center }: Props) {
+export default function MapView({ students, geofences, selectedStudentId, center, focusTrigger }: Props) {
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const layersRef = useRef<L.LayerGroup | null>(null);
+
+  // Храним ID студента, на которого мы УЖЕ сфокусировались, чтобы не прыгать постоянно
+  const [lastCenteredId, setLastCenteredId] = useState<number | null>(null);
+  const lastTriggerRef = useRef<number>(0); // <-- ДОБАВЬ ЭТУ СТРОКУ
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -36,6 +41,13 @@ export default function MapView({ students, geofences, selectedStudentId, center
     layersRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
   }, []);
+
+  // Сбрасываем фокус фиксации, если выбран другой студент
+  useEffect(() => {
+    if (selectedStudentId !== lastCenteredId) {
+      setLastCenteredId(null);
+    }
+  }, [selectedStudentId]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -49,56 +61,100 @@ export default function MapView({ students, geofences, selectedStudentId, center
       L.polygon(latlngs, {
         color,
         fillColor: color,
-        fillOpacity: 0.15,
+        fillOpacity: 0.12,
         weight: 2,
+        dashArray: "4, 4",
       })
-        .bindTooltip(`${g.name} (${g.zone_type})`)
+        .bindTooltip(`${g.name} (${g.zone_type})`, { sticky: true })
         .addTo(layers);
     });
 
     students.forEach(({ student, point, track }) => {
       if (track.length > 1) {
-        const trackLine = track.map((p) => [p.lat, p.lon] as [number, number]);
-        L.polyline(trackLine, {
-          color: "#6366f1",
-          weight: 2,
-          opacity: selectedStudentId === student.id ? 0.8 : 0.3,
-          dashArray: "4,6",
-        }).addTo(layers);
+        // Берём только последние 90 точек, чтобы симулятор не копил бесконечные круги
+        const recentTrack = track.slice(-90);
+        const isSelected = selectedStudentId === student.id;
+
+        for (let i = 0; i < recentTrack.length - 1; i++) {
+          const p1 = recentTrack[i];
+          const p2 = recentTrack[i + 1];
+          const segment = [
+            [p1.lat, p1.lon] as [number, number],
+            [p2.lat, p2.lon] as [number, number]
+          ];
+
+          const progress = i / (recentTrack.length - 1);
+          const baseOpacity = isSelected ? 0.8 : 0.25;
+          const opacity = baseOpacity * progress;
+
+          L.polyline(segment, {
+            color: isSelected ? "#6366f1" : "#94a3b8",
+            weight: isSelected ? 3 : 2,
+            opacity: opacity < 0.08 ? 0.08 : opacity,
+            dashArray: "4, 4",
+          }).addTo(layers);
+        }
       }
       if (point) {
         const isSelected = selectedStudentId === student.id;
+        const isLowBattery = (point.battery ?? 100) <= 15;
         const icon = L.divIcon({
-          className: "",
-          html: `<div style="
-            background: ${isSelected ? '#dc2626' : '#1e3a8a'};
-            color: white;
-            padding: 4px 8px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: 600;
-            white-space: nowrap;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-            border: 2px solid white;
-          ">${student.full_name}</div>`,
-          iconAnchor: [40, 12],
+          className: "custom-student-marker-wrapper",
+          html: `
+            <div class="marker-avatar ${isSelected ? 'selected' : ''} ${isLowBattery ? 'pulse-critical' : ''}" 
+                 style="background: ${isSelected ? '#dc2626' : '#1e3a8a'};">
+              <span>🚸</span>
+            </div>
+          `,
+          iconSize: [36, 36],
+          iconAnchor: [18, 18],
+          popupAnchor: [0, -18],   
+          tooltipAnchor: [0, -18],
         });
+
         const marker = L.marker([point.lat, point.lon], { icon })
+          // Тултип с именем всплывает ТОЛЬКО при наведении мыши
+          .bindTooltip(`<b>${student.full_name}</b>`, { 
+            direction: "top",
+            opacity: 0.9 
+          })
+          // Детальный попап открывается по клику
           .bindPopup(
-            `<b>${student.full_name}</b><br/>Класс: ${student.class_name}<br/>` +
-              `Заряд: ${point.battery ?? "—"}%<br/>` +
-              `Обновлено: ${new Date(point.recorded_at).toLocaleTimeString()}`,
+            `<div style="font-family: sans-serif; padding: 2px;">
+              <b style="font-size: 14px;">${student.full_name}</b><br/>
+              <span style="display:block; margin-top:4px;"><b>Класс:</b> ${student.class_name}</span>
+              <span style="display:block; color: ${isLowBattery ? '#dc2626' : '#16a34a'}">
+                <b>Заряд:</b> ${point.battery ?? "—"}%
+              </span>
+              <span style="display:block; font-size: 10px; color: #666; margin-top: 4px;">
+                <b>Обновлено:</b> ${new Date(point.recorded_at).toLocaleTimeString()}
+              </span>
+            </div>`
           )
           .addTo(layers);
-        if (isSelected) marker.openPopup();
+
+        if (isSelected && lastCenteredId === null) {
+          marker.openPopup();
+        }
       }
     });
 
     if (selectedStudentId) {
       const sel = students.find((s) => s.student.id === selectedStudentId);
-      if (sel?.point) map.setView([sel.point.lat, sel.point.lon], 16);
+
+      const isNewStudent = lastCenteredId !== selectedStudentId;
+      const isExplicitClick = focusTrigger !== undefined && focusTrigger > lastTriggerRef.current;
+
+      if (sel?.point && (isNewStudent || isExplicitClick)) {
+        map.setView([sel.point.lat, sel.point.lon], 16);
+        
+        setLastCenteredId(selectedStudentId);
+        if (focusTrigger !== undefined) {
+          lastTriggerRef.current = focusTrigger;
+        }
+      }
     }
-  }, [students, geofences, selectedStudentId]);
+  }, [students, geofences, selectedStudentId, lastCenteredId, focusTrigger]);
 
   return <div ref={containerRef} className="map-container" />;
 }

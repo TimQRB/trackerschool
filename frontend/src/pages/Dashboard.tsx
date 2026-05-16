@@ -28,6 +28,7 @@ export default function Dashboard({ user, onLogout }: Props) {
   const [geofences, setGeofences] = useState<Geofence[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [focusTrigger, setFocusTrigger] = useState<number>(0);
 
   async function loadAll() {
     const [students, fences, evts] = await Promise.all([
@@ -141,11 +142,15 @@ export default function Dashboard({ user, onLogout }: Props) {
                   style={{ marginTop: 8, padding: "4px 8px", fontSize: 12 }}
                   onClick={async (e) => {
                     e.stopPropagation();
+                    setSelectedId(student.id);
+                    setFocusTrigger(prev => prev + 1);
                     try {
-                      const r = await api.locateNow(student.device!.id);
-                      if (!r.ok) alert(r.reason || "Устройство не на связи");
+                      const r = await api.locateNow(student.device!.id);                      
+                      if (!r.ok) {
+                        console.warn(`Устройство ${student.full_name} не ответило на пинг:`, r.reason);
+                      }
                     } catch (err: any) {
-                      alert("Ошибка: " + err.message);
+                      console.error("Ошибка фонового поиска:", err.message);
                     }
                   }}
                 >
@@ -171,6 +176,7 @@ export default function Dashboard({ user, onLogout }: Props) {
             students={live}
             geofences={geofences}
             selectedStudentId={selectedId}
+            focusTrigger={focusTrigger}
           />
         </main>
       </div>

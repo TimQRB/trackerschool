@@ -5,6 +5,8 @@ services:
       POSTGRES_USER: safemektep
       POSTGRES_PASSWORD: safemektep
       POSTGRES_DB: safemektep
+    ports:
+      - "5435:5432" # Expose on a different port to avoid conflicts with local Postgres
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
