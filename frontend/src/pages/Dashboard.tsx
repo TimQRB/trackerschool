@@ -177,6 +177,7 @@ export default function Dashboard({ user, onLogout }: Props) {
             geofences={geofences}
             selectedStudentId={selectedId}
             focusTrigger={focusTrigger}
+            events={events}
           />
         </main>
       </div>

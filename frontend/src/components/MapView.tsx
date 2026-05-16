@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState} from "react";
 import L from "leaflet";
-import { Geofence, LocationPoint, Student } from "../api";
+import { Geofence, LocationPoint, Student, Event } from "../api";
 
 interface LiveStudent {
   student: Student;
@@ -14,6 +14,7 @@ interface Props {
   selectedStudentId: number | null;
   center?: [number, number];
   focusTrigger?: number;
+  events: Event[];
 }
 
 const ZONE_COLORS: Record<string, string> = {
@@ -22,14 +23,14 @@ const ZONE_COLORS: Record<string, string> = {
   route: "#f59e0b",
 };
 
-export default function MapView({ students, geofences, selectedStudentId, center, focusTrigger }: Props) {
+export default function MapView({ students, geofences, selectedStudentId, center, focusTrigger, events }: Props) {
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const layersRef = useRef<L.LayerGroup | null>(null);
 
   // Храним ID студента, на которого мы УЖЕ сфокусировались, чтобы не прыгать постоянно
   const [lastCenteredId, setLastCenteredId] = useState<number | null>(null);
-  const lastTriggerRef = useRef<number>(0); // <-- ДОБАВЬ ЭТУ СТРОКУ
+  const lastTriggerRef = useRef<number>(0);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -42,7 +43,6 @@ export default function MapView({ students, geofences, selectedStudentId, center
     mapRef.current = map;
   }, []);
 
-  // Сбрасываем фокус фиксации, если выбран другой студент
   useEffect(() => {
     if (selectedStudentId !== lastCenteredId) {
       setLastCenteredId(null);
@@ -98,12 +98,20 @@ export default function MapView({ students, geofences, selectedStudentId, center
       if (point) {
         const isSelected = selectedStudentId === student.id;
         const isLowBattery = (point.battery ?? 100) <= 15;
+        const hasActiveSos = events.some(
+          (e) => e.student_id === student.id && 
+               e.event_type === "sos" && 
+               e.severity === "critical" && 
+               !e.acknowledged
+        );
+
+        const isCritical = isLowBattery || hasActiveSos;
         const icon = L.divIcon({
           className: "custom-student-marker-wrapper",
           html: `
-            <div class="marker-avatar ${isSelected ? 'selected' : ''} ${isLowBattery ? 'pulse-critical' : ''}" 
-                 style="background: ${isSelected ? '#dc2626' : '#1e3a8a'};">
-              <span>🚸</span>
+            <div class="marker-avatar ${isSelected ? 'selected' : ''} ${isCritical ? 'pulse-critical' : ''}" 
+                 style="background: ${hasActiveSos ? '#dc2626' : (isSelected ? '#6366f1' : '#1e3a8a')};">
+              <span>${hasActiveSos ? '🚨' : '🚸'}</span>
             </div>
           `,
           iconSize: [36, 36],
@@ -154,7 +162,7 @@ export default function MapView({ students, geofences, selectedStudentId, center
         }
       }
     }
-  }, [students, geofences, selectedStudentId, lastCenteredId, focusTrigger]);
+  }, [students, geofences, selectedStudentId, lastCenteredId, focusTrigger, events]);
 
   return <div ref={containerRef} className="map-container" />;
 }
