@@ -42,12 +42,15 @@ def batch_command(
 ):
     """Send a command to multiple students' devices at once.
 
-    Supported commands:
-      - lesson_mode:  { swit: 1|3, list: [{ week: "0", timeList: [{ begTime, endTime }] }] }
+    Supported commands (units match HC02 manufacturer spec):
+      - lesson_mode:  { swit: 0|1|3, list: [{ week: "0,1,2,...", timeList: [{ begTime: "0800", endTime: "1600" }] }] }
+                      swit: 0=off, 1=on (no SOS calls), 3=on (SOS allowed)
+                      week: comma-separated digits where 0=Sunday, 1=Monday, ..., 6=Saturday
       - locate_now:   {}
-      - set_gps_interval:    { posPeriod: "60" }
-      - set_heart_rate_interval: { heartRatePeriod: "60" }
+      - set_gps_interval:    { posPeriod: "5" }      # MINUTES (1-60), not seconds
+      - set_heart_rate_interval: { heartRatePeriod: "60" }  # MINUTES (5-120)
       - set_sms_block: { interceptorMode: "1"|"2"|"3" }
+                       1=no block, 2=family+whitelist only, 3=block all
     """
     proto_type = COMMAND_PROTO_MAP.get(payload.command)
     if proto_type is None:

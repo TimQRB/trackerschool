@@ -42,7 +42,8 @@ export default function SettingsScreen() {
   const canManage = user?.role === 'school' || user?.role === 'admin';
 
   const [sending, setSending] = useState<string | null>(null);
-  const [gpsInterval, setGpsInterval] = useState('60');
+  // posPeriod в HC02 protocol измеряется в МИНУТАХ (см. spec 4.14), не в секундах
+  const [gpsInterval, setGpsInterval] = useState('5');
   const [hrInterval, setHrInterval] = useState('60');
   const [smsMode, setSmsMode] = useState('1');
 
@@ -70,6 +71,8 @@ export default function SettingsScreen() {
   };
 
   const toggleLessonMode = (enable: boolean) => {
+    // HC02 spec 4.7: week = comma-separated digits, 0=Sunday, 1=Monday, ..., 6=Saturday.
+    // "1,2,3,4,5" = Mon-Fri.
     sendCommand('lesson_mode', {
       swit: enable ? 3 : 0,
       list: [
@@ -130,10 +133,11 @@ export default function SettingsScreen() {
                   value={gpsInterval}
                   onChangeText={setGpsInterval}
                   keyboardType="number-pad"
-                  placeholder="60"
+                  placeholder="5"
                 />
-                <Text style={styles.inputLabel}>секунд</Text>
+                <Text style={styles.inputLabel}>минут</Text>
               </View>
+              <Text style={styles.hint}>HC02 принимает интервал в минутах (1–60)</Text>
               <TouchableOpacity
                 style={[styles.actionBtn, styles.blueBtn]}
                 onPress={() => sendCommand('set_gps_interval', { posPeriod: gpsInterval })}

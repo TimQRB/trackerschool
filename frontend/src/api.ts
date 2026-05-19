@@ -11,6 +11,7 @@ export interface User {
 export interface Device {
   id: number;
   identifier: string;
+  imei: string | null;
   student_id: number | null;
   api_key: string;
   last_seen_at: string | null;

@@ -42,23 +42,36 @@ def _serialize(rows: list[Contact]) -> list[dict]:
     ]
 
 
+TYPE_TO_CONTACT: dict[str, str] = {
+    "2": ContactType.WHITELIST.value,
+    "5": ContactType.FAMILY.value,
+    "6": ContactType.SOS.value,
+}
+TYPE_TO_RESPONSE_KEY: dict[str, str] = {
+    "2": "whiteNumber",
+    "5": "familyNumber",
+    "6": "sosNumber",
+}
+
+
 @router.post("/getDevParam")
 def get_dev_param(payload: DevParamRequest, db: Annotated[Session, Depends(get_db)]):
-    device = db.execute(select(Device).where(Device.imei == payload.identity)).scalar_one_or_none()
-    if not device:
-        return {"success": "false", "message": "Device not found"}
+    """HC02 boot-up config pull (spec section 5). Identification by IMEI only.
 
-    t = payload.type
-    if t == "2":  # whitelist
-        rows = _contacts(db, device.id, ContactType.WHITELIST.value)
-        return {"whiteNumber": _serialize(rows), "success": "true", "message": "Operation successful"}
-    if t == "5":  # family
-        rows = _contacts(db, device.id, ContactType.FAMILY.value)
-        return {"success": "true", "familyNumber": _serialize(rows), "message": "Operation successful"}
-    if t == "6":  # SOS
-        rows = _contacts(db, device.id, ContactType.SOS.value)
-        return {"success": "true", "sosNumber": _serialize(rows), "message": "Operation successful"}
-    if t == "3":  # classroom mode (not modeled yet — return empty)
+    Per spec, the platform always replies success=true with an empty list when
+    there is no data, never an error — otherwise the device firmware may abort
+    its boot sequence. So we return empty results for unknown IMEI as well.
+    """
+    device = db.execute(select(Device).where(Device.imei == payload.identity)).scalar_one_or_none()
+
+    if payload.type == "3":
+        # Classroom mode pull. MVP: schedule isn't persisted per device yet — return empty.
         return {"timeList": [], "success": "true", "swit": 0, "message": "Operation successful"}
 
-    return {"success": "false", "message": f"Unknown type {t}"}
+    contact_type = TYPE_TO_CONTACT.get(payload.type)
+    response_key = TYPE_TO_RESPONSE_KEY.get(payload.type)
+    if not contact_type or not response_key:
+        return {"success": "false", "message": f"Unknown type {payload.type}"}
+
+    rows = _contacts(db, device.id, contact_type) if device else []
+    return {response_key: _serialize(rows), "success": "true", "message": "Operation successful"}

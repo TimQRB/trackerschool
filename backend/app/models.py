@@ -201,3 +201,14 @@ class CallLog(Base):
     direction: Mapped[str] = mapped_column(String(16))  # incoming | outgoing
     duration: Mapped[int] = mapped_column(Integer, default=0)
     called_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SmsLog(Base):
+    """SMS history reported by device (protocol 0x1016)."""
+    __tablename__ = "sms_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), index=True)
+    number: Mapped[str] = mapped_column(String(32))
+    content: Mapped[str] = mapped_column(Text)
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)

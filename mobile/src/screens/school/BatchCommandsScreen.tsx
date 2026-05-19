@@ -76,20 +76,21 @@ export default function BatchCommandsScreen() {
       action: () => send('locate_now'),
     },
     {
-      key: 'set_gps_60',
+      key: 'set_gps_1',
       icon: 'wifi' as const,
-      label: 'GPS интервал: 60с',
-      desc: 'Установить интервал позиционирования',
+      label: 'GPS интервал: 1 мин',
+      desc: 'Частое позиционирование (расход батареи)',
       color: '#1e3a8a',
-      action: () => send('set_gps_interval', { posPeriod: '60' }),
+      // HC02 posPeriod = минуты (spec 4.14, диапазон 1-60)
+      action: () => send('set_gps_interval', { posPeriod: '1' }),
     },
     {
-      key: 'set_gps_300',
+      key: 'set_gps_5',
       icon: 'wifi' as const,
       label: 'GPS интервал: 5 мин',
-      desc: 'Установить интервал позиционирования',
+      desc: 'Стандартный режим',
       color: '#1e3a8a',
-      action: () => send('set_gps_interval', { posPeriod: '300' }),
+      action: () => send('set_gps_interval', { posPeriod: '5' }),
     },
   ];
 

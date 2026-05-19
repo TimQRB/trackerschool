@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 import redis.asyncio as aioredis
 from sqlalchemy import select
 
-from app.bus import publish, set_loop
+from app.bus import publish
 from app.config import settings
 from app.database import SessionLocal
 from app.geofence_service import check_transitions
@@ -32,6 +32,7 @@ from app.models import (
     HealthRecord,
     LocationPoint,
     Severity,
+    SmsLog,
     Student,
 )
 
@@ -45,6 +46,7 @@ from .protocol import (
     P_IMMEDIATE_LOC,
     P_LINK,
     P_POSITION,
+    P_SMS_REPORT,
     read_frame,
 )
 
@@ -132,7 +134,8 @@ def _get_or_create_device(db, imei: str, dev_type: str | None, model_name: str |
     device = db.execute(select(Device).where(Device.imei == imei)).scalar_one_or_none()
     if device is None:
         # Auto-provision: operator binds to a student later via admin UI.
-        identifier = f"HC02-{imei[-6:]}"
+        # Use full IMEI as identifier suffix — last 6 digits could collide.
+        identifier = f"HC02-{imei}"
         import secrets
         device = Device(
             identifier=identifier,
@@ -408,6 +411,35 @@ def _handle_blood_oxygen(db, device: Device, body: dict) -> None:
     log.info("blood-oxygen imei=%s spo2=%s", device.imei, spo2)
 
 
+def _handle_sms_report(db, device: Device, body: dict) -> None:
+    """0x1016 — SMS records reported by device. Payload: {"list": [{sendNum, sendContent, sendTime}, ...]}"""
+    items = body.get("list") or []
+    if not isinstance(items, list):
+        return
+    for item in items:
+        number = item.get("sendNum") or ""
+        content = item.get("sendContent") or ""
+        if not number and not content:
+            continue
+        sent_at = datetime.now(timezone.utc)
+        time_str = item.get("sendTime", "")
+        if time_str:
+            for fmt in ("%Y%m%d%H%M%S", "%Y-%m-%d %H:%M:%S"):
+                try:
+                    sent_at = datetime.strptime(time_str, fmt).replace(tzinfo=timezone.utc)
+                    break
+                except ValueError:
+                    continue
+        db.add(SmsLog(
+            device_id=device.id,
+            number=number,
+            content=content,
+            sent_at=sent_at,
+        ))
+    db.commit()
+    log.info("sms-report imei=%s items=%s", device.imei, len(items))
+
+
 def _handle_call_log(db, device: Device, body: dict) -> None:
     """0x0312 — call record report from device."""
     number = body.get("number", "")
@@ -541,6 +573,15 @@ async def svc_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
                 await writer.drain()
                 log.info("svc: imei=%s call-log upload", imei)
 
+            elif frame.proto_type == P_SMS_REPORT:
+                if imei:
+                    with SessionLocal() as db:
+                        device = db.execute(select(Device).where(Device.imei == imei)).scalar_one()
+                        _handle_sms_report(db, device, req)
+                writer.write(Frame(P_SMS_REPORT, {"res": {"result": 1}}).encode())
+                await writer.drain()
+                log.info("svc: imei=%s sms-report upload", imei)
+
             else:
                 log.info("svc: imei=%s unhandled proto 0x%04x payload=%s",
                          imei, frame.proto_type, frame.payload)
@@ -560,7 +601,6 @@ async def svc_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
 
 
 async def main():
-    set_loop(asyncio.get_running_loop())
     log.info("admin: %s / %s", settings.admin_email, settings.admin_password)
 
     reg = await asyncio.start_server(reg_handler, host="0.0.0.0", port=REG_PORT)

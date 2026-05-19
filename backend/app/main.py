@@ -1,4 +1,3 @@
-import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,14 +6,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import bus
 from .init_db import init
 from .routers import auth, contacts, devices, events, geofences, locations, students, users, ws
-from .routers import attendance, commands, device_config, health, notifications
+from .routers import attendance, commands, device_config, health, notifications, sms
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    bus.set_loop(asyncio.get_running_loop())
     init()
-    yield
+    await bus.start_listener()
+    try:
+        yield
+    finally:
+        await bus.stop_listener()
 
 
 app = FastAPI(title="SafeMektep API", lifespan=lifespan)
@@ -41,6 +43,7 @@ app.include_router(notifications.router)
 app.include_router(attendance.router)
 app.include_router(commands.router)
 app.include_router(health.router)
+app.include_router(sms.router)
 
 
 @app.get("/api/health")

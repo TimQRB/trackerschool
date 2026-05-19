@@ -13,3 +13,5 @@ dist/
 *.pptx
 *.pdf
 MOBILE_APP_SPEC.md
+simulator;C/
+.tmp_docx_imgs
