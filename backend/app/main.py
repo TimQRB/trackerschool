@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import bus
 from .init_db import init
 from .routers import auth, contacts, devices, events, geofences, locations, students, users, ws
-from .routers import attendance, commands, device_config, health, notifications, sms
+from .routers import at_terminal, attendance, commands, device_config, health, notifications, sms
 
 
 @asynccontextmanager
@@ -29,6 +29,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(at_terminal.router)
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(students.router)

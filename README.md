@@ -347,6 +347,109 @@ python hc02_sim.py --gateway-host localhost --reg-port 13000 --imei 999999999999
 | 8 | Reconnect-backoff устройства (30s/3m/8m/18m per HC02 spec 1.1-1.6) — не имитирован в `hc02_sim.py` | `simulator/hc02_sim.py` |
 | 9 | Нет аудит-лога доступа к данным детей | — |
 
+## AT Command Web Terminal
+
+The admin panel includes a built-in **AT Command Web Terminal** that replaces the need for separate serial terminal software (such as sscom, PuTTY, or minicom) when configuring tracker devices via USB.
+
+### Features
+
+- **Serial Terminal** — send AT commands to the tracker over USB and see live responses
+- **Command Templates** — 25+ pre-built AT commands with descriptions (signal check, APN config, GPS toggle, factory reset, etc.)
+- **Command History** — every command and its response is logged to the database
+- **Remote AT over TCP** — send AT commands to devices already connected via the HC02 TCP protocol (requires firmware with 0x10FF support)
+
+### Step-by-Step: First-time tracker setup
+
+#### 1. Physical connection
+
+1. Install the **ASR Modem** drivers for your tracker (Windows may require disabling driver signature enforcement).
+2. Connect the tracker to your computer using a **data-capable USB cable** (the charging-only cable that comes with the device will not work).
+3. Open **Device Manager** — look for a new port named *"ASR Modem Device"*. Note the COM port number (e.g., `COM3`).
+
+#### 2. Open the terminal
+
+1. Log in as **admin** or **school** role.
+2. Navigate to `/admin` and click the **AT Terminal** tab.
+3. Make sure the sub-tab **Terminal** is selected.
+
+#### 3. Connect
+
+1. **Port** dropdown — select the COM port matching *ASR Modem Device* (ports are auto-detected on the server).
+2. **Baud** — leave at `115200` (standard for ASR modems).
+3. Click **Open** — the terminal window should show: `Connected to COMx @ 115200`.
+
+#### 4. Test communication
+
+1. Type `AT` in the input field and press **Enter**.
+2. The device should reply with `OK`.
+
+#### 5. Essential diagnostic commands
+
+| Command | What it checks | Expected response |
+|---------|---------------|-------------------|
+| `AT` | Basic modem communication | `OK` |
+| `AT+CPIN?` | SIM card status | `+CPIN: READY` |
+| `AT+CSQ` | Signal strength (0–31) | `+CSQ: 15,0` (higher is better) |
+| `AT+CREG?` | Network registration | `+CREG: 0,1` (home network) |
+| `AT+CGATT?` | GPRS attachment | `+CGATT: 1` (attached) |
+| `AT+CGDCONT?` | Current APN settings | Shows configured APN |
+| `AT+COPS?` | Current operator | Operator name |
+| `AT+CIMI` | SIM card IMSI | 15-digit number |
+| `AT+CCID` | SIM card serial number | 20-digit number |
+
+#### 6. Configure APN (if internet is not working)
+
+Click the **Templates** sub-tab and tap the command for your operator:
+
+- **Beeline KZ**: `AT+CGDCONT=1,"IP","internet.beeline.kz"`
+- **Tele2 KZ**: `AT+CGDCONT=1,"IP","internet.tele2.kz"`
+- **Activ KZ**: `AT+CGDCONT=1,"IP","internet.activ.kz"`
+- **Other**: type your custom APN manually
+
+After setting APN, send `AT+CGATT=1` to attach GPRS.
+
+#### 7. GPS and device commands
+
+| Command | Action |
+|---------|--------|
+| `AT+QGPS=1` | Enable GNSS (Qualcomm-based trackers) |
+| `AT+QGPS=0` | Disable GNSS |
+| `AT+HEART=300` | Set heartbeat interval to 300 seconds |
+| `AT+SLEEP=0` | Disable sleep mode |
+| `AT+RESET` | **Restart the device** (required for many settings to take effect) |
+
+#### 8. Using Templates
+
+Switch to the **Templates** sub-tab:
+- Browse 25+ categorized commands with Russian labels and descriptions
+- **Click any template** — if the serial port is open, the command is sent immediately; if closed, it is copied to the input field
+
+#### 9. Remote AT via TCP
+
+Switch to the **Remote** sub-tab:
+1. Select a device from the dropdown (filtered by IMEI).
+2. Type an AT command or click one of the quick-action buttons.
+3. Click **Send** — the command is forwarded through the existing TCP connection.
+4. *Note: requires tracker firmware that handles protocol type `0x10FF`.*
+
+#### 10. Viewing history
+
+Switch to the **History** sub-tab:
+- All AT commands (both serial and remote) are logged with timestamps
+- Filter by device, view commands, responses, and success/failure status
+- History is stored in the `at_command_logs` database table
+
+### REST API endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/at/ports` | List available serial COM ports |
+| `GET` | `/api/at/templates` | List AT command templates |
+| `GET` | `/api/at/history` | Get AT command history (query: `device_id`, `limit`, `offset`) |
+| `POST` | `/api/at/history` | Save an AT command to history |
+| `POST` | `/api/at/remote` | Send an AT command to an online device via TCP |
+| `WS` | `/api/at/ws?token=<JWT>` | WebSocket serial terminal — bidirectional command/response |
+
 ## Контакты разработки
 
 - Issues / TODO — внутри файлов через `# TODO:` (`grep -rn "TODO" backend frontend mobile`)

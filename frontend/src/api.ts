@@ -149,6 +149,55 @@ export interface Contact {
   serial_no: number;
 }
 
+export interface SerialPort {
+  port: string;
+  description: string;
+  hwid: string;
+}
+
+export interface AtTemplate {
+  command: string;
+  label: string;
+  description: string;
+}
+
+export interface AtLogEntry {
+  id: number;
+  device_id: number | null;
+  command: string;
+  response: string | null;
+  source: string;
+  success: boolean;
+  created_at: string;
+}
+
+export const atApi = {
+  listPorts: () => request<SerialPort[]>("/api/at/ports"),
+  listTemplates: () => request<AtTemplate[]>("/api/at/templates"),
+  getHistory: (deviceId?: number, limit = 50, offset = 0) => {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (deviceId !== undefined) params.set("device_id", String(deviceId));
+    return request<AtLogEntry[]>(`/api/at/history?${params}`);
+  },
+  saveHistory: (data: {
+    device_id?: number | null;
+    command: string;
+    response?: string;
+    source?: string;
+    success?: boolean;
+  }) => request<AtLogEntry>("/api/at/history", { method: "POST", body: JSON.stringify(data) }),
+  remoteCommand: (imei: string, command: string) =>
+    request<{ ok: boolean; reason?: string; imei: string; command: string }>(
+      "/api/at/remote",
+      { method: "POST", body: JSON.stringify({ imei, command }) },
+    ),
+  wsUrl: () => {
+    const token = getToken();
+    const base = WS_URL.replace(/^http/, "ws");
+    return `${base}/api/at/ws${token ? `?token=${token}` : ""}`;
+  },
+};
+
 export function setToken(token: string) {
   localStorage.setItem("token", token);
 }

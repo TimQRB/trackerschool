@@ -1,13 +1,14 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, Contact, Device, Geofence, Student, User } from "../api";
+import { api, atApi, Contact, Device, Geofence, Student, User } from "../api";
+import { WS_URL } from "../api";
 
 interface Props {
   user: User;
   onLogout: () => void;
 }
 
-type Tab = "students" | "devices" | "geofences" | "contacts" | "users";
+type Tab = "students" | "devices" | "geofences" | "contacts" | "users" | "at";
 
 export default function Admin({ user, onLogout }: Props) {
   const [tab, setTab] = useState<Tab>("students");
@@ -37,6 +38,9 @@ export default function Admin({ user, onLogout }: Props) {
           <button className={tab === "contacts" ? "active" : ""} onClick={() => setTab("contacts")}>
             Контакты
           </button>
+          <button className={tab === "at" ? "active" : ""} onClick={() => setTab("at")}>
+            AT-терминал
+          </button>
           {user.role === "admin" && (
             <button className={tab === "users" ? "active" : ""} onClick={() => setTab("users")}>
               Пользователи
@@ -49,6 +53,7 @@ export default function Admin({ user, onLogout }: Props) {
           {tab === "devices" && <DevicesTab isAdmin={user.role === "admin"} />}
           {tab === "geofences" && <GeofencesTab />}
           {tab === "contacts" && <ContactsTab />}
+          {tab === "at" && <AtTerminalTab />}
           {tab === "users" && <UsersTab />}
         </div>
       </div>
@@ -454,6 +459,552 @@ function ContactsTab() {
             </button>
           </form>
         </>
+      )}
+    </div>
+  );
+}
+
+const AT_WS_PROTOCOL = [
+  { type: "ports", label: "Список портов" },
+  { type: "open", label: "Подключиться" },
+  { type: "send", label: "Отправить команду" },
+  { type: "close", label: "Отключиться" },
+];
+
+interface AtMessage {
+  type: string;
+  data?: string;
+  port?: string;
+  baud?: number;
+  message?: string;
+  ports?: { port: string; description: string; hwid: string }[];
+}
+
+function AtTerminalTab() {
+  const [tab, setTab] = useState<"terminal" | "templates" | "history" | "remote">("terminal");
+  const [ws, setWs] = useState<WebSocket | null>(null);
+  const [connected, setConnected] = useState(false);
+  const [logs, setLogs] = useState<{ dir: "in" | "out" | "sys"; text: string }[]>([]);
+  const [ports, setPorts] = useState<{ port: string; description: string }[]>([]);
+  const [selectedPort, setSelectedPort] = useState("");
+  const [baud, setBaud] = useState(115200);
+  const [input, setInput] = useState("");
+  const [cmdHistory, setCmdHistory] = useState<string[]>([]);
+  const [historyIdx, setHistoryIdx] = useState(-1);
+  const [templates, setTemplates] = useState<AtTemplate[]>([]);
+  const [atHistory, setAtHistory] = useState<AtLogEntry[]>([]);
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [remoteImei, setRemoteImei] = useState("");
+  const [remoteCmd, setRemoteCmd] = useState("");
+  const [remoteResult, setRemoteResult] = useState("");
+  const logRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const addLog = useCallback((dir: "in" | "out" | "sys", text: string) => {
+    setLogs((prev) => [...prev.slice(-500), { dir, text }]);
+  }, []);
+
+  useEffect(() => {
+    logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" });
+  }, [logs]);
+
+  useEffect(() => {
+    atApi.listTemplates().then(setTemplates).catch(() => {});
+    atApi.listPorts()
+      .then((p) => {
+        setPorts(p);
+        const asr = p.find((x) => x.description.toLowerCase().includes("asr"));
+        if (asr) setSelectedPort(asr.port);
+        else if (p.length > 0) setSelectedPort(p[0].port);
+      })
+      .catch(() => {});
+    atApi.getHistory().then(setAtHistory).catch(() => {});
+    api.listDevices().then(setDevices).catch(() => {});
+  }, []);
+
+  function connectWs() {
+    if (ws) ws.close();
+    const base = WS_URL.replace(/^http/, "ws");
+    const token = localStorage.getItem("token");
+    const sock = new WebSocket(`${base}/api/at/ws${token ? `?token=${token}` : ""}`);
+
+    sock.onopen = () => {
+      setConnected(true);
+      addLog("sys", "WebSocket connected");
+      sock.send(JSON.stringify({ type: "ports" }));
+    };
+
+    sock.onmessage = (e) => {
+      try {
+        const msg: AtMessage = JSON.parse(e.data);
+        if (msg.type === "ports" && msg.ports) {
+          setPorts(msg.ports);
+          const asr = msg.ports.find((x) => x.description.toLowerCase().includes("asr"));
+          if (asr && !selectedPort) setSelectedPort(asr.port);
+        } else if (msg.type === "opened") {
+          addLog("sys", `Connected to ${msg.port} @ ${msg.baud}`);
+        } else if (msg.type === "data" && msg.data) {
+          addLog("in", msg.data);
+        } else if (msg.type === "sent" && msg.data) {
+          addLog("out", msg.data);
+        } else if (msg.type === "closed") {
+          addLog("sys", "Disconnected");
+          setConnected(false);
+        } else if (msg.type === "error" && msg.message) {
+          addLog("sys", `ERROR: ${msg.message}`);
+        }
+      } catch { /* ignore */ }
+    };
+
+    sock.onclose = () => {
+      setConnected(false);
+      addLog("sys", "WebSocket closed");
+      setWs(null);
+    };
+
+    sock.onerror = () => {
+      addLog("sys", "WebSocket error");
+    };
+
+    setWs(sock);
+  }
+
+  function sendMsg(msg: Record<string, unknown>) {
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(msg));
+    } else {
+      addLog("sys", "Not connected");
+    }
+  }
+
+  function handleConnect() {
+    if (connected) {
+      sendMsg({ type: "close" });
+      ws?.close();
+    } else {
+      connectWs();
+      setTimeout(() => {
+        if (selectedPort) sendMsg({ type: "open", port: selectedPort, baud });
+      }, 500);
+    }
+  }
+
+  function handleSend(e: React.FormEvent) {
+    e.preventDefault();
+    const cmd = input.trim();
+    if (!cmd) return;
+    sendMsg({ type: "send", data: cmd + "\r\n" });
+    setCmdHistory((prev) => [cmd, ...prev].slice(0, 100));
+    setHistoryIdx(-1);
+    setInput("");
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (cmdHistory.length > 0) {
+        const next = Math.min(historyIdx + 1, cmdHistory.length - 1);
+        setHistoryIdx(next);
+        setInput(cmdHistory[next]);
+      }
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (historyIdx > 0) {
+        const next = historyIdx - 1;
+        setHistoryIdx(next);
+        setInput(cmdHistory[next]);
+      } else {
+        setHistoryIdx(-1);
+        setInput("");
+      }
+    }
+  }
+
+  function sendTemplate(cmd: string) {
+    sendMsg({ type: "send", data: cmd + "\r\n" });
+    setCmdHistory((prev) => [cmd, ...prev].slice(0, 100));
+  }
+
+  async function handleRemote(e: React.FormEvent) {
+    e.preventDefault();
+    if (!remoteImei || !remoteCmd) return;
+    setRemoteResult("Sending...");
+    try {
+      const res = await atApi.remoteCommand(remoteImei, remoteCmd);
+      setRemoteResult(res.ok ? `Sent to ${remoteImei}` : `Failed: ${res.reason}`);
+    } catch (err: unknown) {
+      setRemoteResult(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  const isConnected = connected && ws?.readyState === WebSocket.OPEN;
+
+  return (
+    <div>
+      <div className="tabs" style={{ maxWidth: 500, marginBottom: 16 }}>
+        <button className={tab === "terminal" ? "active" : ""} onClick={() => setTab("terminal")}>
+          Терминал
+        </button>
+        <button className={tab === "templates" ? "active" : ""} onClick={() => setTab("templates")}>
+          Шаблоны
+        </button>
+        <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>
+          История
+        </button>
+        <button className={tab === "remote" ? "active" : ""} onClick={() => setTab("remote")}>
+          Удалённо
+        </button>
+      </div>
+
+      {tab === "terminal" && (
+        <div>
+          <div style={{ display: "flex", gap: 12, alignItems: "end", marginBottom: 12, flexWrap: "wrap" }}>
+            <div style={{ minWidth: 200, flex: 1 }}>
+              <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                Порт
+              </label>
+              <select
+                value={selectedPort}
+                onChange={(e) => setSelectedPort(e.target.value)}
+                style={{ width: "100%", padding: "6px 8px", borderRadius: 4, border: "1px solid #cbd5e1" }}
+                disabled={isConnected}
+              >
+                {ports.length === 0 && <option value="">— порты не найдены —</option>}
+                {ports.map((p) => (
+                  <option key={p.port} value={p.port}>
+                    {p.port} — {p.description}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div style={{ width: 100 }}>
+              <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                Baud
+              </label>
+              <select
+                value={baud}
+                onChange={(e) => setBaud(Number(e.target.value))}
+                style={{ width: "100%", padding: "6px 8px", borderRadius: 4, border: "1px solid #cbd5e1" }}
+                disabled={isConnected}
+              >
+                {[9600, 19200, 38400, 57600, 115200, 230400].map((b) => (
+                  <option key={b} value={b}>{b}</option>
+                ))}
+              </select>
+            </div>
+            <button
+              onClick={handleConnect}
+              style={{
+                padding: "6px 16px",
+                borderRadius: 6,
+                border: "none",
+                cursor: "pointer",
+                fontWeight: 600,
+                background: isConnected ? "#dc2626" : "#1e3a8a",
+                color: "white",
+                height: 32,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {isConnected ? "Закрыть" : "Открыть"}
+            </button>
+            <button
+              onClick={() => sendMsg({ type: "flush" })}
+              disabled={!isConnected}
+              style={{
+                padding: "6px 16px",
+                borderRadius: 6,
+                border: "1px solid #1e3a8a",
+                cursor: "pointer",
+                background: "white",
+                color: "#1e3a8a",
+                height: 32,
+                whiteSpace: "nowrap",
+              }}
+            >
+              Flush
+            </button>
+            <button
+              onClick={() => { setLogs([]); }}
+              style={{
+                padding: "6px 16px",
+                borderRadius: 6,
+                border: "1px solid #94a3b8",
+                cursor: "pointer",
+                background: "white",
+                color: "#64748b",
+                height: 32,
+                whiteSpace: "nowrap",
+              }}
+            >
+              Очистить
+            </button>
+          </div>
+
+          <div
+            ref={logRef}
+            className="at-terminal"
+            style={{
+              background: "#0f172a",
+              color: "#e2e8f0",
+              fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
+              fontSize: 13,
+              padding: 12,
+              borderRadius: 8,
+              height: 360,
+              overflowY: "auto",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-all",
+              lineHeight: 1.5,
+            }}
+          >
+            {logs.length === 0 && (
+              <div style={{ color: "#64748b" }}>
+                <div>Выберите порт и нажмите «Открыть» для подключения к устройству.</div>
+                <div style={{ marginTop: 4 }}>После подключения вводите AT-команды в поле ниже.</div>
+              </div>
+            )}
+            {logs.map((l, i) => (
+              <div
+                key={i}
+                style={{
+                  color: l.dir === "in" ? "#4ade80" : l.dir === "out" ? "#60a5fa" : "#f59e0b",
+                }}
+              >
+                {l.text}
+              </div>
+            ))}
+          </div>
+
+          <form onSubmit={handleSend} style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <input
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={isConnected ? "AT+CSQ" : "Сначала откройте порт"}
+              disabled={!isConnected}
+              style={{
+                flex: 1,
+                padding: "8px 12px",
+                borderRadius: 6,
+                border: "1px solid #cbd5e1",
+                fontFamily: "monospace",
+                fontSize: 13,
+              }}
+            />
+            <button
+              type="submit"
+              disabled={!isConnected || !input.trim()}
+              style={{
+                padding: "8px 20px",
+                borderRadius: 6,
+                border: "none",
+                background: isConnected ? "#1e3a8a" : "#94a3b8",
+                color: "white",
+                cursor: isConnected ? "pointer" : "default",
+                fontWeight: 600,
+              }}
+            >
+              Отправить
+            </button>
+          </form>
+        </div>
+      )}
+
+      {tab === "templates" && (
+        <div>
+          <h3>Шаблоны AT-команд</h3>
+          <p style={{ color: "#64748b", fontSize: 13, marginBottom: 12 }}>
+            Нажмите на команду, чтобы отправить её в терминал.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 8 }}>
+            {templates.length === 0 && <div style={{ color: "#64748b" }}>Загрузка...</div>}
+            {templates.map((t, i) => (
+              <button
+                key={i}
+                onClick={() => {
+                  if (isConnected) sendTemplate(t.command);
+                  else setInput(t.command);
+                }}
+                style={{
+                  textAlign: "left",
+                  padding: "10px 12px",
+                  borderRadius: 6,
+                  border: "1px solid #e2e8f0",
+                  background: "white",
+                  cursor: "pointer",
+                  transition: "background 0.15s",
+                }}
+                title={`Отправить: ${t.command}`}
+              >
+                <div style={{ fontWeight: 600, fontSize: 13, fontFamily: "monospace", color: "#1e3a8a" }}>
+                  {t.command}
+                </div>
+                <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{t.label}</div>
+                <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>{t.description}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tab === "history" && (
+        <div>
+          <h3>История AT-команд</h3>
+          <div style={{ display: "flex", gap: 12, marginBottom: 12, alignItems: "end" }}>
+            <div style={{ minWidth: 200 }}>
+              <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                Устройство
+              </label>
+              <select
+                value=""
+                onChange={(e) => {
+                  const id = e.target.value ? Number(e.target.value) : undefined;
+                  atApi.getHistory(id).then(setAtHistory).catch(() => {});
+                }}
+                style={{ width: "100%", padding: "6px 8px", borderRadius: 4, border: "1px solid #cbd5e1" }}
+              >
+                <option value="">Все устройства</option>
+                {devices.map((d) => (
+                  <option key={d.id} value={d.id}>{d.identifier} ({d.imei})</option>
+                ))}
+              </select>
+            </div>
+            <button
+              onClick={() => atApi.getHistory().then(setAtHistory).catch(() => {})}
+              style={{
+                padding: "6px 16px",
+                borderRadius: 6,
+                border: "1px solid #1e3a8a",
+                cursor: "pointer",
+                background: "white",
+                color: "#1e3a8a",
+                height: 32,
+              }}
+            >
+              Обновить
+            </button>
+          </div>
+          <div style={{ maxHeight: 400, overflowY: "auto" }}>
+            {atHistory.length === 0 && (
+              <div style={{ color: "#64748b", fontSize: 13 }}>История пуста</div>
+            )}
+            {atHistory.map((h) => (
+              <div
+                key={h.id}
+                style={{
+                  padding: "8px 12px",
+                  marginBottom: 6,
+                  borderRadius: 6,
+                  border: "1px solid #e2e8f0",
+                  background: h.success ? "#f0fdf4" : "#fef2f2",
+                  fontFamily: "monospace",
+                  fontSize: 12,
+                }}
+              >
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
+                  <span style={{
+                    padding: "1px 6px",
+                    borderRadius: 4,
+                    fontSize: 10,
+                    fontWeight: 600,
+                    background: h.source === "remote" ? "#dbeafe" : "#f3e8ff",
+                    color: h.source === "remote" ? "#1d4ed8" : "#7c3aed",
+                  }}>
+                    {h.source === "remote" ? "TCP" : "Serial"}
+                  </span>
+                  <span style={{ color: "#64748b", fontSize: 11 }}>
+                    {new Date(h.created_at).toLocaleString()}
+                  </span>
+                  {h.device_id && (
+                    <span style={{ color: "#64748b", fontSize: 11 }}>
+                      device #{h.device_id}
+                    </span>
+                  )}
+                </div>
+                <div style={{ color: "#1e3a8a", fontWeight: 600 }}>{'>'} {h.command}</div>
+                {h.response && (
+                  <div style={{ color: h.success ? "#16a34a" : "#dc2626", marginTop: 2, whiteSpace: "pre-wrap" }}>
+                    {h.response}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tab === "remote" && (
+        <div>
+          <h3>Удалённая AT-команда через TCP</h3>
+          <p style={{ color: "#64748b", fontSize: 13, marginBottom: 12 }}>
+            Отправить AT-команду на устройство, которое уже на связи с сервером.
+            <br />
+            <strong>Важно:</strong> требует прошивки трекера с поддержкой протокола 0x10FF.
+          </p>
+
+          <form onSubmit={handleRemote} style={{ maxWidth: 500 }}>
+            <div className="form-row">
+              <label>Устройство (IMEI)</label>
+              <select value={remoteImei} onChange={(e) => setRemoteImei(e.target.value)} required>
+                <option value="">— выбрать —</option>
+                {devices.filter((d) => d.imei).map((d) => (
+                  <option key={d.id} value={d.imei!}>
+                    {d.identifier} (IMEI: {d.imei})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="form-row">
+              <label>AT-команда</label>
+              <input
+                value={remoteCmd}
+                onChange={(e) => setRemoteCmd(e.target.value)}
+                placeholder="AT+CSQ"
+                style={{ fontFamily: "monospace" }}
+                required
+              />
+            </div>
+            <div className="form-row" style={{ display: "flex", gap: 8 }}>
+              {["AT", "AT+CSQ", "AT+CGATT?", "AT+CPIN?", "AT+CREG?"].map((cmd) => (
+                <button
+                  key={cmd}
+                  type="button"
+                  onClick={() => setRemoteCmd(cmd)}
+                  style={{
+                    padding: "4px 8px",
+                    borderRadius: 4,
+                    border: "1px solid #e2e8f0",
+                    background: "#f8fafc",
+                    cursor: "pointer",
+                    fontFamily: "monospace",
+                    fontSize: 11,
+                  }}
+                >
+                  {cmd}
+                </button>
+              ))}
+            </div>
+            <button className="btn-primary" type="submit" style={{ maxWidth: 200 }}>
+              Отправить
+            </button>
+          </form>
+
+          {remoteResult && (
+            <div style={{
+              marginTop: 12,
+              padding: 12,
+              borderRadius: 6,
+              background: "#f8fafc",
+              border: "1px solid #e2e8f0",
+              fontFamily: "monospace",
+              fontSize: 13,
+            }}>
+              {remoteResult}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

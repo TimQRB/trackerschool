@@ -203,6 +203,19 @@ class CallLog(Base):
     called_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class AtCommandLog(Base):
+    """AT command execution log (local serial + remote TCP tunnel)."""
+    __tablename__ = "at_command_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_id: Mapped[int | None] = mapped_column(ForeignKey("devices.id"), nullable=True, index=True)
+    command: Mapped[str] = mapped_column(Text)
+    response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(String(16), default="serial")
+    success: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
 class SmsLog(Base):
     """SMS history reported by device (protocol 0x1016)."""
     __tablename__ = "sms_logs"

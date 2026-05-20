@@ -24,6 +24,7 @@ from app.database import SessionLocal
 from app.geofence_service import check_transitions
 from app.notify import send_push_to_parents
 from app.models import (
+    AtCommandLog,
     AttendanceLog,
     CallLog,
     Device,
@@ -39,6 +40,7 @@ from app.models import (
 from .protocol import (
     Frame,
     P_ALARM,
+    P_AT_COMMAND,
     P_BLOOD_OXYGEN,
     P_CALL_LOG,
     P_HEARTBEAT,
@@ -581,6 +583,26 @@ async def svc_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
                 writer.write(Frame(P_SMS_REPORT, {"res": {"result": 1}}).encode())
                 await writer.drain()
                 log.info("svc: imei=%s sms-report upload", imei)
+
+            elif frame.proto_type == P_AT_COMMAND:
+                res = frame.payload.get("res", {})
+                if imei and res:
+                    cmd = res.get("cmd", "")
+                    response = res.get("response", "")
+                    success = res.get("success", False)
+                    with SessionLocal() as db:
+                        device = db.execute(select(Device).where(Device.imei == imei)).scalar_one()
+                        db.add(AtCommandLog(
+                            device_id=device.id,
+                            command=cmd,
+                            response=response,
+                            source="remote",
+                            success=bool(success),
+                        ))
+                        db.commit()
+                    log.info("svc: imei=%s at-command result cmd=%s success=%s", imei, cmd, success)
+                else:
+                    log.info("svc: imei=%s at-command (forward from platform, no response yet)", imei)
 
             else:
                 log.info("svc: imei=%s unhandled proto 0x%04x payload=%s",
