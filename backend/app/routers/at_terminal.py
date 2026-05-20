@@ -62,33 +62,30 @@ AT_TEMPLATES: list[dict] = [
 ]
 
 
-# ---------- serial port session manager ----------
+# ---------- session managers (serial + TCP) ----------
 class SerialSession:
     def __init__(self):
         self.ser: serial.Serial | None = None
         self.reader_task: asyncio.Task | None = None
-        self._cancel_event = asyncio.Event()
+
+    @property
+    def label(self) -> str:
+        return f"serial:{self.ser.port}" if self.ser else ""
 
     def is_open(self) -> bool:
         return self.ser is not None and self.ser.is_open
 
     def list_ports(self) -> list[dict]:
-        ports = []
-        for p in serial.tools.list_ports.comports():
-            ports.append({
-                "port": p.device,
-                "description": p.description,
-                "hwid": p.hwid,
-            })
-        return ports
+        return [
+            {"port": p.device, "description": p.description, "hwid": p.hwid}
+            for p in serial.tools.list_ports.comports()
+        ]
 
     async def open(self, port: str, baud: int = 115200) -> str:
         if self.is_open():
             raise RuntimeError(f"Already connected to {self.ser.port}")
         try:
-            self.ser = await asyncio.to_thread(
-                serial.Serial, port, baud, timeout=1, write_timeout=1,
-            )
+            self.ser = await asyncio.to_thread(serial.Serial, port, baud, timeout=1, write_timeout=1)
             logger.info("serial: opened %s @ %d", port, baud)
             return f"Connected to {port} @ {baud}"
         except serial.SerialException as e:
@@ -96,25 +93,16 @@ class SerialSession:
             raise RuntimeError(str(e))
 
     async def send(self, data: str) -> None:
-        if not self.is_open():
-            raise RuntimeError("Serial port not open")
         encoded = data.encode("utf-8")
         await asyncio.to_thread(self.ser.write, encoded)
 
-    async def read_all(self) -> str:
-        if not self.is_open():
-            return ""
+    async def read_some(self) -> str:
         data = await asyncio.to_thread(self.ser.read_all)
-        return data.decode("utf-8", errors="replace") if data else ""
-
-    async def read_until_timeout(self) -> str:
-        if not self.is_open():
-            return ""
-        data = await asyncio.to_thread(self.ser.read_until)
-        return data.decode("utf-8", errors="replace") if data else ""
+        if data:
+            return data.decode("utf-8", errors="replace")
+        return ""
 
     def close(self) -> None:
-        self._cancel_event.set()
         if self.reader_task:
             self.reader_task.cancel()
             self.reader_task = None
@@ -125,10 +113,111 @@ class SerialSession:
             except Exception:
                 pass
             self.ser = None
-        self._cancel_event.clear()
 
 
-_session = SerialSession()
+class TcpSession:
+    def __init__(self):
+        self.reader: asyncio.StreamReader | None = None
+        self.writer: asyncio.StreamWriter | None = None
+        self.reader_task: asyncio.Task | None = None
+        self._host = ""
+        self._port = 0
+
+    @property
+    def label(self) -> str:
+        return f"tcp:{self._host}:{self._port}" if self._host else ""
+
+    def is_open(self) -> bool:
+        return self.writer is not None
+
+    async def open(self, host: str, port: int) -> str:
+        if self.is_open():
+            raise RuntimeError(f"Already connected to {self._host}:{self._port}")
+        try:
+            self.reader, self.writer = await asyncio.open_connection(host, port)
+            self._host = host
+            self._port = port
+            logger.info("tcp: connected to %s:%d", host, port)
+            return f"Connected to {host}:{port}"
+        except (OSError, ConnectionError) as e:
+            self.writer = None
+            raise RuntimeError(str(e))
+
+    async def send(self, data: str) -> None:
+        self.writer.write(data.encode("utf-8"))
+        await self.writer.drain()
+
+    async def read_some(self) -> str:
+        try:
+            data = await asyncio.wait_for(self.reader.read(4096), timeout=0.1)
+            return data.decode("utf-8", errors="replace") if data else ""
+        except asyncio.TimeoutError:
+            return ""
+        except Exception:
+            raise
+
+    def close(self) -> None:
+        if self.reader_task:
+            self.reader_task.cancel()
+            self.reader_task = None
+        if self.writer:
+            try:
+                self.writer.close()
+                logger.info("tcp: closed %s:%d", self._host, self._port)
+            except Exception:
+                pass
+            self.writer = None
+            self.reader = None
+        self._host = ""
+        self._port = 0
+
+
+class SessionManager:
+    def __init__(self):
+        self.serial = SerialSession()
+        self.tcp = TcpSession()
+        self._active: SerialSession | TcpSession | None = None
+
+    @property
+    def active(self) -> SerialSession | TcpSession | None:
+        return self._active
+
+    def is_open(self) -> bool:
+        return self._active is not None and self._active.is_open()
+
+    async def connect_serial(self, port: str, baud: int) -> str:
+        self.close()
+        result = await self.serial.open(port, baud)
+        self._active = self.serial
+        return result
+
+    async def connect_tcp(self, host: str, port: int) -> str:
+        self.close()
+        result = await self.tcp.open(host, port)
+        self._active = self.tcp
+        return result
+
+    async def send(self, data: str) -> None:
+        if not self._active or not self._active.is_open():
+            raise RuntimeError("Not connected")
+        await self._active.send(data)
+
+    async def read_some(self) -> str:
+        if not self._active or not self._active.is_open():
+            return ""
+        return await self._active.read_some()
+
+    @property
+    def label(self) -> str:
+        return self._active.label if self._active else ""
+
+    def close(self) -> None:
+        self.serial.close()
+        self.tcp.close()
+        self._active = None
+
+
+_session = SessionManager()
 
 
 # ---------- REST endpoints ----------
@@ -253,16 +342,20 @@ async def at_websocket(websocket: WebSocket, token: str | None = Query(None)):
             pass
 
     async def reader_loop():
-        while True:
-            try:
-                data = await _session.read_until_timeout()
-                if data:
-                    await send({"type": "data", "data": data})
-            except Exception as e:
-                await send({"type": "error", "message": str(e)})
-                break
+        try:
+            while True:
+                try:
+                    data = await _session.read_some()
+                    if data:
+                        await send({"type": "data", "data": data})
+                    await asyncio.sleep(0.05)
+                except Exception as e:
+                    await send({"type": "error", "message": str(e)})
+                    break
+        except asyncio.CancelledError:
+            pass
 
-    serial_reader_task: asyncio.Task | None = None
+    reader_task: asyncio.Task | None = None
 
     try:
         while True:
@@ -270,17 +363,26 @@ async def at_websocket(websocket: WebSocket, token: str | None = Query(None)):
             msg_type = msg.get("type", "")
 
             if msg_type == "ports":
-                ports = _session.list_ports()
+                ports = _session.serial.list_ports()
                 await send({"type": "ports", "ports": ports})
 
             elif msg_type == "open":
                 try:
-                    _session.close()
                     port = msg.get("port", "")
                     baud = int(msg.get("baud", 115200))
-                    result = await _session.open(port, baud)
-                    await send({"type": "opened", "message": result, "port": port, "baud": baud})
-                    serial_reader_task = asyncio.create_task(reader_loop())
+                    result = await _session.connect_serial(port, baud)
+                    await send({"type": "opened", "message": result, "port": port, "baud": baud, "mode": "serial"})
+                    reader_task = asyncio.create_task(reader_loop())
+                except RuntimeError as e:
+                    await send({"type": "error", "message": str(e)})
+
+            elif msg_type == "connect_tcp":
+                try:
+                    host = msg.get("host", "127.0.0.1")
+                    port = int(msg.get("port", 9999))
+                    result = await _session.connect_tcp(host, port)
+                    await send({"type": "opened", "message": result, "host": host, "tcpPort": port, "mode": "tcp"})
+                    reader_task = asyncio.create_task(reader_loop())
                 except RuntimeError as e:
                     await send({"type": "error", "message": str(e)})
 
@@ -294,13 +396,13 @@ async def at_websocket(websocket: WebSocket, token: str | None = Query(None)):
 
             elif msg_type == "close":
                 _session.close()
-                if serial_reader_task:
-                    serial_reader_task.cancel()
-                    serial_reader_task = None
+                if reader_task:
+                    reader_task.cancel()
+                    reader_task = None
                 await send({"type": "closed"})
 
             elif msg_type == "flush":
-                data = await _session.read_all()
+                data = await _session.read_some()
                 if data:
                     await send({"type": "data", "data": data})
 
@@ -317,5 +419,5 @@ async def at_websocket(websocket: WebSocket, token: str | None = Query(None)):
             pass
     finally:
         _session.close()
-        if serial_reader_task:
-            serial_reader_task.cancel()
+        if reader_task:
+            reader_task.cancel()

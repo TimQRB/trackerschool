@@ -476,18 +476,24 @@ interface AtMessage {
   data?: string;
   port?: string;
   baud?: number;
+  host?: string;
+  tcpPort?: number;
+  mode?: string;
   message?: string;
   ports?: { port: string; description: string; hwid: string }[];
 }
 
 function AtTerminalTab() {
   const [tab, setTab] = useState<"terminal" | "templates" | "history" | "remote">("terminal");
-  const [ws, setWs] = useState<WebSocket | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
+  const [connMode, setConnMode] = useState<"serial" | "tcp">("serial");
   const [logs, setLogs] = useState<{ dir: "in" | "out" | "sys"; text: string }[]>([]);
   const [ports, setPorts] = useState<{ port: string; description: string }[]>([]);
   const [selectedPort, setSelectedPort] = useState("");
   const [baud, setBaud] = useState(115200);
+  const [tcpHost, setTcpHost] = useState("127.0.0.1");
+  const [tcpPort, setTcpPort] = useState("9999");
   const [input, setInput] = useState("");
   const [cmdHistory, setCmdHistory] = useState<string[]>([]);
   const [historyIdx, setHistoryIdx] = useState(-1);
@@ -522,8 +528,20 @@ function AtTerminalTab() {
     api.listDevices().then(setDevices).catch(() => {});
   }, []);
 
-  function connectWs() {
-    if (ws) ws.close();
+  function sendMsg(msg: Record<string, unknown>) {
+    const sock = wsRef.current;
+    if (sock && sock.readyState === WebSocket.OPEN) {
+      sock.send(JSON.stringify(msg));
+    } else {
+      addLog("sys", "Not connected");
+    }
+  }
+
+  function connectThenSend(connectMsg: Record<string, unknown>) {
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
     const base = WS_URL.replace(/^http/, "ws");
     const token = localStorage.getItem("token");
     const sock = new WebSocket(`${base}/api/at/ws${token ? `?token=${token}` : ""}`);
@@ -531,7 +549,7 @@ function AtTerminalTab() {
     sock.onopen = () => {
       setConnected(true);
       addLog("sys", "WebSocket connected");
-      sock.send(JSON.stringify({ type: "ports" }));
+      sock.send(JSON.stringify(connectMsg));
     };
 
     sock.onmessage = (e) => {
@@ -542,7 +560,11 @@ function AtTerminalTab() {
           const asr = msg.ports.find((x) => x.description.toLowerCase().includes("asr"));
           if (asr && !selectedPort) setSelectedPort(asr.port);
         } else if (msg.type === "opened") {
-          addLog("sys", `Connected to ${msg.port} @ ${msg.baud}`);
+          if (msg.mode === "tcp") {
+            addLog("sys", `Connected to TCP ${msg.host}:${msg.tcpPort}`);
+          } else {
+            addLog("sys", `Connected to ${msg.port} @ ${msg.baud}`);
+          }
         } else if (msg.type === "data" && msg.data) {
           addLog("in", msg.data);
         } else if (msg.type === "sent" && msg.data) {
@@ -559,33 +581,26 @@ function AtTerminalTab() {
     sock.onclose = () => {
       setConnected(false);
       addLog("sys", "WebSocket closed");
-      setWs(null);
+      wsRef.current = null;
     };
 
     sock.onerror = () => {
       addLog("sys", "WebSocket error");
     };
 
-    setWs(sock);
-  }
-
-  function sendMsg(msg: Record<string, unknown>) {
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(msg));
-    } else {
-      addLog("sys", "Not connected");
-    }
+    wsRef.current = sock;
   }
 
   function handleConnect() {
     if (connected) {
       sendMsg({ type: "close" });
-      ws?.close();
+      if (wsRef.current) wsRef.current.close();
     } else {
-      connectWs();
-      setTimeout(() => {
-        if (selectedPort) sendMsg({ type: "open", port: selectedPort, baud });
-      }, 500);
+      if (connMode === "serial" && selectedPort) {
+        connectThenSend({ type: "open", port: selectedPort, baud });
+      } else {
+        connectThenSend({ type: "connect_tcp", host: tcpHost, port: Number(tcpPort) });
+      }
     }
   }
 
@@ -637,7 +652,7 @@ function AtTerminalTab() {
     }
   }
 
-  const isConnected = connected && ws?.readyState === WebSocket.OPEN;
+  const isConnected = connected && wsRef.current?.readyState === WebSocket.OPEN;
 
   return (
     <div>
@@ -659,39 +674,109 @@ function AtTerminalTab() {
       {tab === "terminal" && (
         <div>
           <div style={{ display: "flex", gap: 12, alignItems: "end", marginBottom: 12, flexWrap: "wrap" }}>
-            <div style={{ minWidth: 200, flex: 1 }}>
+            <div>
               <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>
-                Порт
+                Тип подключения
               </label>
-              <select
-                value={selectedPort}
-                onChange={(e) => setSelectedPort(e.target.value)}
-                style={{ width: "100%", padding: "6px 8px", borderRadius: 4, border: "1px solid #cbd5e1" }}
-                disabled={isConnected}
-              >
-                {ports.length === 0 && <option value="">— порты не найдены —</option>}
-                {ports.map((p) => (
-                  <option key={p.port} value={p.port}>
-                    {p.port} — {p.description}
-                  </option>
-                ))}
-              </select>
+              <div style={{ display: "flex", gap: 4 }}>
+                <button
+                  onClick={() => setConnMode("serial")}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 6,
+                    border: "1px solid #cbd5e1",
+                    cursor: "pointer",
+                    background: connMode === "serial" ? "#1e3a8a" : "white",
+                    color: connMode === "serial" ? "white" : "#1a202c",
+                    fontSize: 12,
+                    fontWeight: 600,
+                  }}
+                  disabled={isConnected}
+                >
+                  Serial
+                </button>
+                <button
+                  onClick={() => setConnMode("tcp")}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 6,
+                    border: "1px solid #cbd5e1",
+                    cursor: "pointer",
+                    background: connMode === "tcp" ? "#1e3a8a" : "white",
+                    color: connMode === "tcp" ? "white" : "#1a202c",
+                    fontSize: 12,
+                    fontWeight: 600,
+                  }}
+                  disabled={isConnected}
+                >
+                  TCP
+                </button>
+              </div>
             </div>
-            <div style={{ width: 100 }}>
-              <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>
-                Baud
-              </label>
-              <select
-                value={baud}
-                onChange={(e) => setBaud(Number(e.target.value))}
-                style={{ width: "100%", padding: "6px 8px", borderRadius: 4, border: "1px solid #cbd5e1" }}
-                disabled={isConnected}
-              >
-                {[9600, 19200, 38400, 57600, 115200, 230400].map((b) => (
-                  <option key={b} value={b}>{b}</option>
-                ))}
-              </select>
-            </div>
+
+            {connMode === "serial" ? (
+              <>
+                <div style={{ minWidth: 200, flex: 1 }}>
+                  <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                    Порт
+                  </label>
+                  <select
+                    value={selectedPort}
+                    onChange={(e) => setSelectedPort(e.target.value)}
+                    style={{ width: "100%", padding: "6px 8px", borderRadius: 4, border: "1px solid #cbd5e1" }}
+                    disabled={isConnected}
+                  >
+                    {ports.length === 0 && <option value="">— порты не найдены —</option>}
+                    {ports.map((p) => (
+                      <option key={p.port} value={p.port}>
+                        {p.port} — {p.description}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ width: 100 }}>
+                  <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                    Baud
+                  </label>
+                  <select
+                    value={baud}
+                    onChange={(e) => setBaud(Number(e.target.value))}
+                    style={{ width: "100%", padding: "6px 8px", borderRadius: 4, border: "1px solid #cbd5e1" }}
+                    disabled={isConnected}
+                  >
+                    {[9600, 19200, 38400, 57600, 115200, 230400].map((b) => (
+                      <option key={b} value={b}>{b}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ width: 160 }}>
+                  <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                    Хост
+                  </label>
+                  <input
+                    value={tcpHost}
+                    onChange={(e) => setTcpHost(e.target.value)}
+                    style={{ width: "100%", padding: "6px 8px", borderRadius: 4, border: "1px solid #cbd5e1", fontFamily: "monospace" }}
+                    disabled={isConnected}
+                  />
+                </div>
+                <div style={{ width: 80 }}>
+                  <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                    Порт
+                  </label>
+                  <input
+                    value={tcpPort}
+                    onChange={(e) => setTcpPort(e.target.value)}
+                    style={{ width: "100%", padding: "6px 8px", borderRadius: 4, border: "1px solid #cbd5e1", fontFamily: "monospace" }}
+                    disabled={isConnected}
+                  />
+                </div>
+              </>
+            )}
+
             <button
               onClick={handleConnect}
               style={{

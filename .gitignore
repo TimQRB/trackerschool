@@ -13,5 +13,7 @@ dist/
 *.pptx
 *.pdf
 MOBILE_APP_SPEC.md
-simulator;C/
+ARCHITECTURE.md
+convert_to_docx.py
+simulator/__pycache__/
 .tmp_docx_imgs
