@@ -67,6 +67,8 @@ function StudentsTab() {
   const [cls, setCls] = useState("");
   const [parentId, setParentId] = useState<string>("");
   const [parents, setParents] = useState<User[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   async function load() {
     setItems(await api.listStudents());
@@ -88,16 +90,59 @@ function StudentsTab() {
     load();
   }
 
+  async function handleCsvUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploading(true);
+    try {
+      const res = await api.importStudentsCSV(file);
+      alert(res.message || "Импорт успешно завершен!");
+      load();
+    } catch (err) {
+      alert(`Ошибка импорта: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+    }
+  }
+
   return (
     <div>
-      <h3>Ученики</h3>
+      <div style={{ display: "flex", justifyContent: "between", alignItems: "center", marginBottom: 16, gap: 8 }}>
+        <h3>Ученики</h3>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <label 
+            style={{ 
+              padding: "6px 12px", 
+              background: "#1e3a8a", 
+              color: "white", 
+              borderRadius: 6, 
+              cursor: uploading ? "not-allowed" : "pointer",
+              fontSize: 13,
+              fontWeight: 600,
+              opacity: uploading ? 0.6 : 1
+            }}
+          >
+            {uploading ? "Загрузка..." : "Импорт студентов из CSV"}
+            <input 
+              type="file" 
+              accept=".csv" 
+              onChange={handleCsvUpload} 
+              disabled={uploading}
+              style={{ display: "none" }} 
+            />
+          </label>
+        </div>
+      </div>
+
       <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 20 }}>
         <thead>
           <tr style={{ background: "#f1f5f9", textAlign: "left" }}>
             <th style={{ padding: 8 }}>ФИО</th>
             <th style={{ padding: 8 }}>Класс</th>
             <th style={{ padding: 8 }}>Устройство</th>
-            <th style={{ padding: 8 }}>Родитель ID</th>
+            <th style={{ padding: 8 }}>Родитель (Email)</th>
           </tr>
         </thead>
         <tbody>
@@ -106,7 +151,7 @@ function StudentsTab() {
               <td style={{ padding: 8 }}>{s.full_name}</td>
               <td style={{ padding: 8 }}>{s.class_name}</td>
               <td style={{ padding: 8 }}>{s.device?.identifier || "—"}</td>
-              <td style={{ padding: 8 }}>{s.parent_id ?? "—"}</td>
+              <td style={{ padding: 8 }}>{s.parent_email || (s.parent_id ? `ID: ${s.parent_id}` : "—")}</td>
             </tr>
           ))}
         </tbody>

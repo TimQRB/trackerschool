@@ -24,6 +24,7 @@ export interface Student {
   full_name: string;
   class_name: string;
   parent_id: number | null;
+  parent_email?: string | null;
   device: Device | null;
 }
 
@@ -63,10 +64,16 @@ function getToken(): string | null {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const incomingHeaders = (options.headers as Record<string, string>) || {};
+  
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    ...((options.headers as Record<string, string>) || {}),
+    ...incomingHeaders,
   };
+
+  if ("Content-Type" in incomingHeaders && incomingHeaders["Content-Type"] === undefined) {
+    delete headers["Content-Type"];
+  }
   const token = getToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
@@ -138,6 +145,19 @@ export const api = {
     serial_no: number;
   }) => request<Contact>("/api/contacts", { method: "POST", body: JSON.stringify(data) }),
   deleteContact: (id: number) => request<void>(`/api/contacts/${id}`, { method: "DELETE" }),
+
+  importStudentsCSV: async (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    return request<{ status: string; message: string }>("/api/students/import-csv", {
+      method: "POST",
+      body: formData,
+      headers: {
+        "Content-Type": undefined as any, 
+      },
+    });
+  },
 };
 
 export interface Contact {

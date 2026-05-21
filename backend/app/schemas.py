@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 # --- Auth ---
@@ -45,12 +45,28 @@ class StudentCreate(BaseModel):
     class_name: str
     parent_id: int | None = None
 
+    @field_validator('parent_id', mode='before')
+    @classmethod
+    def transform_parent_id(cls, v):
+        # Если фронтенд прислал пустую строку "" или строку "null", превращаем в None
+        if v == "" or v == "null" or v is None:
+            return None
+        # Если пришла строка, состоящая из цифр (например "12"), конвертируем в int
+        if isinstance(v, str):
+            v = v.strip()
+            if v.isdigit():
+                return int(v)
+            elif v == "":
+                return None
+        return v
+
 
 class StudentOut(BaseModel):
     id: int
     full_name: str
     class_name: str
     parent_id: int | None
+    parent_email: str | None = None
     device: "DeviceOut | None" = None
 
     class Config:

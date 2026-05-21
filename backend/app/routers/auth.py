@@ -1,6 +1,7 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -26,6 +27,20 @@ def login(payload: LoginRequest, db: Annotated[Session, Depends(get_db)]):
         user_id=user.id,
     )
 
+@router.post("/swagger-login", include_in_schema=False)
+def swagger_login(
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    db: Annotated[Session, Depends(get_db)]
+):
+    user = db.execute(select(User).where(User.email == form_data.username)).scalar_one_or_none()
+    if not user or not verify_password(form_data.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Неверный email или пароль")
+        
+    token = create_access_token(user.id, user.role)
+    return {
+        "access_token": token,
+        "token_type": "bearer"
+    }
 
 @router.get("/me", response_model=UserOut)
 def me(user: Annotated[User, Depends(get_current_user)]):
