@@ -143,3 +143,42 @@ def import_students_csv(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Критическая ошибка при чтении CSV: {str(e)}"
         )
+
+@router.delete("/bulk-delete", status_code=status.HTTP_200_OK)
+def bulk_delete_students(
+    payload: list[int],
+    db: Annotated[Session, Depends(get_db)],
+    _: Annotated[User, Depends(require_roles(Role.ADMIN.value, Role.SCHOOL.value))],
+):
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, 
+            detail="Список ID для удаления пуст"
+        )
+        
+    from sqlalchemy import delete
+    statement = delete(Student).where(Student.id.in_(payload))
+    result = db.execute(statement)
+    db.commit()
+    
+    return {
+        "status": "success",
+        "message": f"Успешно удалено учеников: {result.rowcount}"
+    }
+
+@router.delete("/{student_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_student(
+    student_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    _: Annotated[User, Depends(require_roles(Role.ADMIN.value, Role.SCHOOL.value))],
+):
+    student = db.get(Student, student_id)
+    if not student:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail=f"Ученик с ID {student_id} не найден"
+        )
+    
+    db.delete(student)
+    db.commit()
+    return None

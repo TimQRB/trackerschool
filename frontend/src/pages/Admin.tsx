@@ -61,33 +61,113 @@ export default function Admin({ user, onLogout }: Props) {
   );
 }
 
-function StudentsTab() {
+export function StudentsTab() {
   const [items, setItems] = useState<Student[]>([]);
   const [name, setName] = useState("");
   const [cls, setCls] = useState("");
   const [parentId, setParentId] = useState<string>("");
   const [parents, setParents] = useState<User[]>([]);
+  
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedClass, setSelectedClass] = useState("");
+
+  const [pageSize, setPageSize] = useState<number>(20);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
   async function load() {
-    setItems(await api.listStudents());
     try {
+      const students = await api.listStudents();
+      setItems(students);
       const users = await api.listUsers();
       setParents(users.filter((u) => u.role === "parent"));
-    } catch {}
+    } catch (err) {
+      console.error("Ошибка при загрузке данных:", err);
+    }
   }
-  useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, selectedClass, pageSize]);
+
+  const uniqueClasses = Array.from(new Set(items.map((s) => s.class_name))).filter(Boolean).sort();
+
+  const filteredItems = items.filter((student) => {
+    const matchesSearch = student.full_name.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesClass = selectedClass === "" || student.class_name === selectedClass;
+    return matchesSearch && matchesClass;
+  });
+
+  const totalItems = filteredItems.length;
+  const totalPages = Math.ceil(totalItems / pageSize) || 1;
+  const startIndex = (currentPage - 1) * pageSize;
+  const paginatedItems = filteredItems.slice(startIndex, startIndex + pageSize);
+
+  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.checked) {
+      const currentIds = paginatedItems.map((s) => s.id);
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...currentIds])));
+    } else {
+      const currentIds = paginatedItems.map((s) => s.id);
+      setSelectedIds((prev) => prev.filter((id) => !currentIds.includes(id)));
+    }
+  };
+
+  const handleSelectOne = (id: number, checked: boolean) => {
+    if (checked) {
+      setSelectedIds((prev) => [...prev, id]);
+    } else {
+      setSelectedIds((prev) => prev.filter((item) => item !== id));
+    }
+  };
+
+  async function handleBulkDelete() {
+    if (selectedIds.length === 0) return;
+    const confirmDelete = window.confirm(`Вы уверены, что хотите удалить выбранных учеников (${selectedIds.length} шт.)?`);
+    if (!confirmDelete) return;
+
+    setDeleting(true);
+    try {
+      const res = await api.bulkDeleteStudents(selectedIds);
+      alert(res.message || "Выбранные ученики успешно удалены");
+      setSelectedIds([]);
+      await load();
+    } catch (err) {
+      alert(`Ошибка при удалении: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    await api.createStudent({
-      full_name: name,
-      class_name: cls,
-      parent_id: parentId ? Number(parentId) : null,
-    });
-    setName(""); setCls(""); setParentId("");
-    load();
+    if (!name.trim() || !cls.trim()) return;
+    
+    setSubmitting(true);
+    try {
+      await api.createStudent({
+        full_name: name.trim(),
+        class_name: cls.trim(),
+        parent_id: parentId ? Number(parentId) : null,
+      });
+      setName(""); 
+      setCls(""); 
+      setParentId("");
+      await load();
+    } catch (err) {
+      alert(`Ошибка при создании ученика: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   async function handleCsvUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -98,7 +178,7 @@ function StudentsTab() {
     try {
       const res = await api.importStudentsCSV(file);
       alert(res.message || "Импорт успешно завершен!");
-      load();
+      await load();
     } catch (err) {
       alert(`Ошибка импорта: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -107,77 +187,223 @@ function StudentsTab() {
     }
   }
 
+  function downloadCsvTemplate() {
+    const csvContent = "\uFEFFfull_name,class_name,parent_email\nИванов Иван Иванович,5А,parent@safemektep.kz\nПетров Петр Петрович,11Б,";
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", "students_template.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
+  const isAllOnPageSelected = paginatedItems.length > 0 && paginatedItems.every((s) => selectedIds.includes(s.id));
+
   return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "between", alignItems: "center", marginBottom: 16, gap: 8 }}>
-        <h3>Ученики</h3>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+    <div style={{ fontFamily: "system-ui, sans-serif", color: "#1e293b", padding: "8px 0" }}>
+      
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <h3 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "#0f172a" }}>Управление учениками</h3>
+        
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button
+            type="button"
+            onClick={downloadCsvTemplate}
+            style={{
+              padding: "8px 14px",
+              background: "#ffffff",
+              color: "#475569",
+              border: "1px solid #cbd5e1",
+              borderRadius: 8,
+              cursor: "pointer",
+              fontSize: 13,
+              fontWeight: 600,
+              display: "flex",
+              alignItems: "center",
+              gap: 6
+            }}
+          >
+            📋 Шаблон CSV
+          </button>
+
           <label 
             style={{ 
-              padding: "6px 12px", 
+              padding: "8px 14px", 
               background: "#1e3a8a", 
               color: "white", 
-              borderRadius: 6, 
+              borderRadius: 8, 
               cursor: uploading ? "not-allowed" : "pointer",
               fontSize: 13,
               fontWeight: 600,
-              opacity: uploading ? 0.6 : 1
+              opacity: uploading ? 0.7 : 1
             }}
           >
-            {uploading ? "Загрузка..." : "Импорт студентов из CSV"}
-            <input 
-              type="file" 
-              accept=".csv" 
-              onChange={handleCsvUpload} 
-              disabled={uploading}
-              style={{ display: "none" }} 
-            />
+            {uploading ? "⏳ Загрузка..." : "📥 Импорт из CSV"}
+            <input type="file" accept=".csv" onChange={handleCsvUpload} disabled={uploading} style={{ display: "none" }} />
           </label>
         </div>
       </div>
 
-      <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 20 }}>
-        <thead>
-          <tr style={{ background: "#f1f5f9", textAlign: "left" }}>
-            <th style={{ padding: 8 }}>ФИО</th>
-            <th style={{ padding: 8 }}>Класс</th>
-            <th style={{ padding: 8 }}>Устройство</th>
-            <th style={{ padding: 8 }}>Родитель (Email)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((s) => (
-            <tr key={s.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
-              <td style={{ padding: 8 }}>{s.full_name}</td>
-              <td style={{ padding: 8 }}>{s.class_name}</td>
-              <td style={{ padding: 8 }}>{s.device?.identifier || "—"}</td>
-              <td style={{ padding: 8 }}>{s.parent_email || (s.parent_id ? `ID: ${s.parent_id}` : "—")}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+        <input 
+          type="text"
+          placeholder="🔍 Поиск по ФИО ученика..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          style={{ padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 14, minWidth: 260, outline: "none" }}
+        />
 
-      <form onSubmit={submit} style={{ maxWidth: 400 }}>
-        <h4>Добавить ученика</h4>
-        <div className="form-row">
-          <label>ФИО</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} required />
+        <select
+          value={selectedClass}
+          onChange={(e) => setSelectedClass(e.target.value)}
+          style={{ padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 14, background: "white", outline: "none" }}
+        >
+          <option value="">Все классы</option>
+          {uniqueClasses.map((c) => (
+            <option key={c} value={c}>{c} класс</option>
+          ))}
+        </select>
+
+        {selectedIds.length > 0 && (
+          <button
+            type="button"
+            onClick={handleBulkDelete}
+            disabled={deleting}
+            style={{
+              padding: "8px 14px",
+              background: "#dc2626",
+              color: "white",
+              border: "none",
+              borderRadius: 8,
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: deleting ? "not-allowed" : "pointer",
+              opacity: deleting ? 0.6 : 1,
+              marginLeft: "auto"
+            }}
+          >
+            🗑️ Удалить выбранных ({selectedIds.length})
+          </button>
+        )}
+      </div>
+
+      <div style={{ background: "white", borderRadius: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.05)", overflow: "hidden", border: "1px solid #e2e8f0" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 14 }}>
+          <thead>
+            <tr style={{ background: "#f8fafc", borderBottom: "2px solid #e2e8f0" }}>
+              <th style={{ padding: "14px 16px", width: 40 }}>
+                <input type="checkbox" checked={isAllOnPageSelected} onChange={handleSelectAll} style={{ cursor: "pointer" }} />
+              </th>
+              <th style={{ padding: "14px 16px", fontWeight: 600, color: "#475569" }}>ФИО ученика</th>
+              <th style={{ padding: "14px 16px", fontWeight: 600, color: "#475569" }}>Класс</th>
+              <th style={{ padding: "14px 16px", fontWeight: 600, color: "#475569" }}>Устройство</th>
+              <th style={{ padding: "14px 16px", fontWeight: 600, color: "#475569" }}>Родитель (Email)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {paginatedItems.length === 0 ? (
+              <tr>
+                <td colSpan={5} style={{ padding: "32px", textAlign: "center", color: "#94a3b8" }}>
+                  Никого не найдено по заданным фильтрам.
+                </td>
+              </tr>
+            ) : (
+              paginatedItems.map((s) => (
+                <tr key={s.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                  <td style={{ padding: "14px 16px" }}>
+                    <input 
+                      type="checkbox" 
+                      checked={selectedIds.includes(s.id)} 
+                      onChange={(e) => handleSelectOne(s.id, e.target.checked)} 
+                      style={{ cursor: "pointer" }}
+                    />
+                  </td>
+                  <td style={{ padding: "14px 16px", fontWeight: 500, color: "#1e293b" }}>{s.full_name}</td>
+                  <td style={{ padding: "14px 16px" }}>
+                    <span style={{ background: "#e0f2fe", color: "#0369a1", padding: "3px 8px", borderRadius: 6, fontSize: 12, fontWeight: 600 }}>
+                      {s.class_name}
+                    </span>
+                  </td>
+                  <td style={{ padding: "14px 16px", color: s.device ? "#0f172a" : "#94a3b8" }}>
+                    {s.device ? ` ${s.device.identifier}` : "—"}
+                  </td>
+                  <td style={{ padding: "14px 16px", color: "#334155" }}>
+                    {s.parent_email ? ` ${s.parent_email}` : s.parent_id ? `ID: ${s.parent_id}` : <span style={{ color: "#cbd5e1", fontStyle: "italic" }}>не указан</span>}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#64748b" }}>
+            <span>Показывать по:</span>
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              style={{ padding: "4px 8px", border: "1px solid #cbd5e1", borderRadius: 6, background: "white" }}
+            >
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+              <option value={30}>30</option>
+              <option value={50}>50</option>
+            </select>
+            <span>из {totalItems} строк</span>
+          </div>
+
+          <div style={{ display: "flex", gap: 6 }}>
+            <button
+              onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+              disabled={currentPage === 1}
+              style={{ padding: "6px 12px", border: "1px solid #cbd5e1", borderRadius: 6, background: "white", cursor: currentPage === 1 ? "not-allowed" : "pointer", opacity: currentPage === 1 ? 0.5 : 1, fontSize: 13 }}
+            >
+              ◀ Назад
+            </button>
+            <span style={{ alignSelf: "center", fontSize: 13, color: "#334155", padding: "0 8px" }}>
+              Страница {currentPage} из {totalPages}
+            </span>
+            <button
+              onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
+              disabled={currentPage === totalPages}
+              style={{ padding: "6px 12px", border: "1px solid #cbd5e1", borderRadius: 6, background: "white", cursor: currentPage === totalPages ? "not-allowed" : "pointer", opacity: currentPage === totalPages ? 0.5 : 1, fontSize: 13 }}
+            >
+              Вперед ▶
+            </button>
+          </div>
         </div>
-        <div className="form-row">
-          <label>Класс</label>
-          <input value={cls} onChange={(e) => setCls(e.target.value)} required />
-        </div>
-        <div className="form-row">
-          <label>Родитель</label>
-          <select value={parentId} onChange={(e) => setParentId(e.target.value)}>
-            <option value="">— без родителя —</option>
-            {parents.map((p) => (
-              <option key={p.id} value={p.id}>{p.full_name} ({p.email})</option>
-            ))}
-          </select>
-        </div>
-        <button className="btn-primary" type="submit">Создать</button>
-      </form>
+      </div>
+
+      <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20, maxWidth: 600, marginTop: 24 }}>
+        <h4 style={{ margin: "0 0 14px 0", fontSize: 15, fontWeight: 600 }}>➕ Быстрое добавление нового ученика</h4>
+        <form onSubmit={submit}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <label style={{ fontSize: 12, color: "#64748b" }}>ФИО ученика *</label>
+              <input type="text" placeholder="Иванов Иван Иванович" value={name} onChange={(e) => setName(e.target.value)} required style={{ padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: 8 }} />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <label style={{ fontSize: 12, color: "#64748b" }}>Класс *</label>
+              <input type="text" placeholder="11Б" value={cls} onChange={(e) => setCls(e.target.value)} required style={{ padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: 8 }} />
+            </div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 16 }}>
+            <label style={{ fontSize: 12, color: "#64748b" }}>Родитель</label>
+            <select value={parentId} onChange={(e) => setParentId(e.target.value)} style={{ padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: 8, background: "white" }}>
+              <option value="">— Оставить без родителя —</option>
+              {parents.map((p) => (
+                <option key={p.id} value={p.id}>{p.full_name} ({p.email})</option>
+              ))}
+            </select>
+          </div>
+          <button className="btn-primary" type="submit" disabled={submitting} style={{ padding: "10px", background: "#1e3a8a", color: "white", border: "none", borderRadius: 8, width: "100%", fontWeight: 600, opacity: submitting ? 0.6 : 1, cursor: submitting ? "not-allowed" : "pointer" }}>
+            {submitting ? "Создание..." : "Создать ученика"}
+          </button>
+        </form>
+      </div>
+
     </div>
   );
 }

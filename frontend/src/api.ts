@@ -145,6 +145,13 @@ export const api = {
     serial_no: number;
   }) => request<Contact>("/api/contacts", { method: "POST", body: JSON.stringify(data) }),
   deleteContact: (id: number) => request<void>(`/api/contacts/${id}`, { method: "DELETE" }),
+  deleteStudent: (id: number) => request<void>(`/api/students/${id}`, { method: "DELETE" }),
+  
+  bulkDeleteStudents: (ids: number[]) => 
+    request<{ status: string; message: string }>("/api/students/bulk-delete", {
+      method: "DELETE",
+      body: JSON.stringify(ids),
+    }),
 
   importStudentsCSV: async (file: File) => {
     const formData = new FormData();
