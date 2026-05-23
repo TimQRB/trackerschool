@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { api, Event, Geofence, LocationPoint, Student, User } from "../api";
 import MapView from "../components/MapView";
@@ -29,32 +29,73 @@ export default function Dashboard({ user, onLogout }: Props) {
   const [events, setEvents] = useState<Event[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [focusTrigger, setFocusTrigger] = useState<number>(0);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedClass, setSelectedClass] = useState("");
+  const [pageSize, setPageSize] = useState<number>(20); 
 
   async function loadAll() {
-    const [students, fences, evts] = await Promise.all([
-      api.listStudents(),
-      api.listGeofences(),
-      api.listEvents(24),
-    ]);
-    setGeofences(fences);
-    setEvents(evts);
+    setLoading(true);
+    try {
+      const [students, fences, evts] = await Promise.all([
+        api.listStudents(),
+        api.listGeofences(),
+        api.listEvents(24),
+      ]);
+      setGeofences(fences);
+      setEvents(evts);
 
-    const enriched = await Promise.all(
-      students.map(async (s) => {
-        const [point, track] = await Promise.all([
-          api.lastLocation(s.id),
-          api.track(s.id, 6),
-        ]);
-        return { student: s, point, track };
-      }),
-    );
-    setLive(enriched);
-    if (enriched.length > 0 && !selectedId) setSelectedId(enriched[0].student.id);
+      // Оптимизация: Если учеников слишком много, для защиты от падения 
+      // запрашиваем гео-данные только для первой сотни при старте.
+      const initialBatch = students.slice(0, 100);
+
+      const enriched = await Promise.all(
+        initialBatch.map(async (s) => {
+          const [point, track] = await Promise.all([
+            api.lastLocation(s.id).catch(() => null),
+            api.track(s.id, 6).catch(() => []),
+          ]);
+          return { student: s, point, track };
+        })
+      );
+
+      // Для остальных учеников создаем пустые заготовки локаций (они догрузятся по вебсокету или при клике)
+      const remaining = students.slice(100).map(s => ({ student: s, point: null, track: [] }));
+      
+      const allEnriched = [...enriched, ...remaining];
+      setLive(allEnriched);
+      
+      if (allEnriched.length > 0 && !selectedId) {
+        setSelectedId(allEnriched[0].student.id);
+      }
+    } catch (err) {
+      console.error("Ошибка инициализации дашборда:", err);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
     loadAll();
   }, []);
+
+  const uniqueClasses = useMemo(() => {
+    return Array.from(new Set(live.map((item) => item.student.class_name)))
+      .filter(Boolean)
+      .sort();
+  }, [live]);
+
+  const filteredLive = useMemo(() => {
+    return live.filter(({ student }) => {
+      const matchesSearch = student.full_name.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesClass = selectedClass === "" || student.class_name === selectedClass;
+      return matchesSearch && matchesClass;
+    });
+  }, [live, searchQuery, selectedClass]);
+
+  const visibleLive = useMemo(() => {
+    return filteredLive.slice(0, pageSize);
+  }, [filteredLive, pageSize]);
 
   const connected = useLiveBus((msg) => {
     if (msg.type === "location") {
@@ -63,13 +104,8 @@ export default function Dashboard({ user, onLogout }: Props) {
         const idx = prev.findIndex((x) => x.student.id === p.student_id);
         if (idx === -1) return prev;
         const newPoint: LocationPoint = {
-          id: 0,
-          device_id: p.device_id,
-          lat: p.lat,
-          lon: p.lon,
-          battery: p.battery,
-          speed: p.speed,
-          recorded_at: p.recorded_at,
+          id: 0, device_id: p.device_id, lat: p.lat, lon: p.lon,
+          battery: p.battery, speed: p.speed, recorded_at: p.recorded_at,
         };
         const next = [...prev];
         next[idx] = {
@@ -83,16 +119,9 @@ export default function Dashboard({ user, onLogout }: Props) {
       const p = msg.payload;
       setEvents((prev) => [
         {
-          id: p.id,
-          student_id: p.student_id,
-          event_type: p.event_type,
-          severity: p.severity,
-          geofence_id: null,
-          message: p.message,
-          lat: p.lat,
-          lon: p.lon,
-          acknowledged: false,
-          created_at: p.created_at,
+          id: p.id, student_id: p.student_id, event_type: p.event_type,
+          severity: p.severity, geofence_id: null, message: p.message,
+          lat: p.lat, lon: p.lon, acknowledged: false, created_at: p.created_at,
         },
         ...prev,
       ]);
@@ -110,70 +139,106 @@ export default function Dashboard({ user, onLogout }: Props) {
           </span>
           <span>{user.full_name}</span>
           {(user.role === "admin" || user.role === "school") && (
-            <Link to="/admin" style={{ color: "white" }}>Управление</Link>
+            <Link to="/admin" style={{ color: "white", marginRight: 8 }}>Управление</Link>
           )}
           <button onClick={onLogout}>Выйти</button>
         </div>
       </div>
 
       <div className="layout">
-        <aside className="sidebar">
-          <h3>Ученики</h3>
-          {live.length === 0 && <div style={{ fontSize: 13, color: "#64748b" }}>Нет учеников</div>}
-          {live.map(({ student, point }) => (
-            <div
-              key={student.id}
-              className={`student-card ${selectedId === student.id ? "active" : ""}`}
-              onClick={() => setSelectedId(student.id)}
+        <aside className="sidebar" style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 60px)", overflow: "hidden" }}>
+          
+          <div style={{ padding: "12px 0", borderBottom: "1px solid #e2e8f0" }}>
+            <input 
+              type="text"
+              placeholder="🔍 Поиск ученика..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{ width: "100%", padding: "6px 10px", marginBottom: 8, borderRadius: 6, border: "1px solid #cbd5e1", fontSize: 13, boxSizing: "border-box" }}
+            />
+            <select
+              value={selectedClass}
+              onChange={(e) => setSelectedClass(e.target.value)}
+              style={{ width: "100%", padding: "6px 10px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: 13, background: "white" }}
             >
-              <div className="name">{student.full_name}</div>
-              <div className="meta">
-                Класс {student.class_name}
-                {student.device ? ` • ${student.device.identifier}` : " • без устройства"}
-              </div>
-              <div className="meta">
-                {point
-                  ? `Заряд: ${point.battery ?? "—"}% • ${new Date(point.recorded_at).toLocaleTimeString()}`
-                  : "Нет данных"}
-              </div>
-              {student.device && (
-                <button
-                  className="btn-secondary"
-                  style={{ marginTop: 8, padding: "4px 8px", fontSize: 12 }}
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    setSelectedId(student.id);
-                    setFocusTrigger(prev => prev + 1);
-                    try {
-                      const r = await api.locateNow(student.device!.id);                      
-                      if (!r.ok) {
-                        console.warn(`Устройство ${student.full_name} не ответило на пинг:`, r.reason);
-                      }
-                    } catch (err: any) {
-                      console.error("Ошибка фонового поиска:", err.message);
-                    }
-                  }}
-                >
-                  📍 Найти сейчас
-                </button>
-              )}
-            </div>
-          ))}
+              <option value="">Все классы</option>
+              {uniqueClasses.map(c => (
+                <option key={c} value={c}>{c} класс</option>
+              ))}
+            </select>
+          </div>
 
-          <h3 style={{ marginTop: 20 }}>События (24ч)</h3>
-          {events.length === 0 && <div style={{ fontSize: 13, color: "#64748b" }}>Пока пусто</div>}
-          {events.slice(0, 30).map((e) => (
-            <div key={e.id} className={`event-item ${e.severity}`}>
-              <div><b>{EVENT_LABELS[e.event_type] || e.event_type}</b></div>
-              <div>{e.message}</div>
-              <div className="time">{new Date(e.created_at).toLocaleString()}</div>
-            </div>
-          ))}
+          <div style={{ flex: 1, overflowY: "auto", paddingRight: 4, marginTop: 8 }}>
+            <h3>Ученики ({filteredLive.length})</h3>
+            {loading && <div style={{ fontSize: 13, color: "#64748b" }}>Загрузка данных...</div>}
+            {!loading && filteredLive.length === 0 && <div style={{ fontSize: 13, color: "#64748b" }}>Никого не найдено</div>}
+            
+            {visibleLive.map(({ student, point }) => (
+              <div
+                key={student.id}
+                className={`student-card ${selectedId === student.id ? "active" : ""}`}
+                onClick={() => setSelectedId(student.id)}
+              >
+                <div className="name">{student.full_name}</div>
+                <div className="meta">
+                  Класс {student.class_name}
+                  {student.device ? ` • ${student.device.identifier}` : " • без устройства"}
+                </div>
+                <div className="meta">
+                  {point
+                    ? `Заряд: ${point.battery ?? "—"}% • ${new Date(point.recorded_at).toLocaleTimeString()}`
+                    : "Нет данных"}
+                </div>
+                {student.device && (
+                  <button
+                    className="btn-secondary"
+                    style={{ marginTop: 8, padding: "4px 8px", fontSize: 12 }}
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      setSelectedId(student.id);
+                      setFocusTrigger(prev => prev + 1);
+                      try {
+                        const r = await api.locateNow(student.device!.id);                      
+                        if (!r.ok) {
+                          console.warn(`Устройство ${student.full_name} не ответило на пинг:`, r.reason);
+                        }
+                      } catch (err: any) {
+                        console.error("Ошибка фонового поиска:", err.message);
+                      }
+                    }}
+                  >
+                    📍 Найти сейчас
+                  </button>
+                )}
+              </div>
+            ))}
+
+            {filteredLive.length > pageSize && (
+              <button
+                onClick={() => setPageSize(prev => prev + 20)}
+                style={{ width: "100%", padding: "8px", marginTop: 8, background: "#f1f5f9", border: "1px solid #cbd5e1", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#475569" }}
+              >
+                Показать ещё ({filteredLive.length - pageSize})
+              </button>
+            )}
+          </div>
+
+          <div style={{ height: "250px", borderTop: "2px solid #e2e8f0", overflowY: "auto", paddingTop: 8 }}>
+            <h3>События (24ч)</h3>
+            {events.length === 0 && <div style={{ fontSize: 13, color: "#64748b" }}>Пока пусто</div>}
+            {events.slice(0, 30).map((e) => (
+              <div key={e.id} className={`event-item ${e.severity}`}>
+                <div><b>{EVENT_LABELS[e.event_type] || e.event_type}</b></div>
+                <div>{e.message}</div>
+                <div className="time">{new Date(e.created_at).toLocaleString()}</div>
+              </div>
+            ))}
+          </div>
         </aside>
 
-        <main>
+        <main style={{ flex: 1, position: "relative" }}>
           <MapView
-            students={live}
+            students={filteredLive}
             geofences={geofences}
             selectedStudentId={selectedId}
             focusTrigger={focusTrigger}
