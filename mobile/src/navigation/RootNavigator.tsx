@@ -24,7 +24,7 @@ export default function RootNavigator() {
 
   useEffect(() => {
     if (user) {
-      loadInitialData();
+      loadInitialData().catch((e) => console.warn('loadInitialData error:', e));
     }
   }, [user]);
 
