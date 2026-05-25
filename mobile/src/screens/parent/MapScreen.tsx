@@ -1,5 +1,5 @@
 import { useRef, useCallback, useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator } from 'react-native';
 import MapView, { Marker, Callout, Region } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -41,6 +41,7 @@ export default function MapScreen() {
   const { students, geofences, selectedStudentId, setSelectedStudentId } = useLive();
   const [locating, setLocating] = useState<number | null>(null);
   const [selectedGeofenceId, setSelectedGeofenceId] = useState<number | null>(null);
+  const [showGeoDropdown, setShowGeoDropdown] = useState(false);
 
   const selectedStudent = students.find((s) => s.student.id === selectedStudentId);
 
@@ -158,29 +159,32 @@ export default function MapScreen() {
         ))}
       </MapView>
 
-      {geofences.length > 0 && (
-        <View style={styles.geofenceBar}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingHorizontal: 16 }}>
+      <View style={[styles.bottomCard, { paddingBottom: Math.max(insets.bottom, 16) + 12 }]}>
+        <TouchableOpacity
+          style={styles.geoDropdownToggle}
+          onPress={() => setShowGeoDropdown(prev => !prev)}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Feather name="map-pin" size={16} color="#1e3a8a" />
+            <Text style={styles.geoDropdownText}>
+              {selectedGeofenceId === null
+                ? 'Все геозоны'
+                : geofences.find(g => g.id === selectedGeofenceId)?.name || 'Геозона'}
+            </Text>
+          </View>
+          <Feather name={showGeoDropdown ? 'chevron-up' : 'chevron-down'} size={16} color="#64748b" />
+        </TouchableOpacity>
+
+        {showGeoDropdown && geofences.length > 0 && (
+          <View style={styles.geoDropdownList}>
             <TouchableOpacity
-              style={[styles.geoChip, selectedGeofenceId === null && styles.geoChipActive]}
+              style={[styles.geoDropdownItem, selectedGeofenceId === null && styles.geoDropdownItemActive]}
               onPress={() => {
                 setSelectedGeofenceId(null);
-                if (selectedStudent?.location) {
-                  mapRef.current?.animateToRegion(
-                    {
-                      latitude: selectedStudent.location.lat,
-                      longitude: selectedStudent.location.lon,
-                      latitudeDelta: 0.05,
-                      longitudeDelta: 0.05,
-                    },
-                    800,
-                  );
-                }
+                setShowGeoDropdown(false);
               }}
             >
-              <Text style={[styles.geoChipText, selectedGeofenceId === null && styles.geoChipTextActive]}>
-                Все
-              </Text>
+              <Text style={[styles.geoDropdownItemText, selectedGeofenceId === null && styles.geoDropdownItemTextActive]}>Все геозоны</Text>
             </TouchableOpacity>
             {geofences.map((g) => {
               const isActive = selectedGeofenceId === g.id;
@@ -188,75 +192,82 @@ export default function MapScreen() {
               return (
                 <TouchableOpacity
                   key={g.id}
-                  style={[styles.geoChip, isActive && { backgroundColor: color, borderColor: color }]}
-                  onPress={() => centerOnGeofence(g)}
+                  style={[styles.geoDropdownItem, isActive && styles.geoDropdownItemActive]}
+                  onPress={() => {
+                    setSelectedGeofenceId(g.id);
+                    setShowGeoDropdown(false);
+                    centerOnGeofence(g);
+                  }}
                 >
-                  <View style={[styles.geoChipDot, { backgroundColor: color }]} />
-                  <Text style={[styles.geoChipText, isActive && styles.geoChipTextActive]}>
+                  <View style={[styles.geoDropdownItemDot, { backgroundColor: color }]} />
+                  <Text style={[styles.geoDropdownItemText, isActive && styles.geoDropdownItemTextActive]}>
                     {g.name}
+                  </Text>
+                  <Text style={styles.geoDropdownItemType}>
+                    {g.zone_type === 'school' ? 'Школа' : g.zone_type === 'home' ? 'Дом' : 'Маршрут'}
                   </Text>
                 </TouchableOpacity>
               );
             })}
-          </ScrollView>
-        </View>
-      )}
-
-      <View style={[styles.bottomCard, { paddingBottom: Math.max(insets.bottom, 16) + 12 }]}>
-        {selectedGeofenceId !== null ? (
-          (() => {
-            const gf = geofences.find((g) => g.id === selectedGeofenceId);
-            if (!gf) return null;
-            return (
-              <>
-                <Text style={styles.name}>{gf.name}</Text>
-                <Text style={styles.meta}>
-                  Тип: {gf.zone_type === 'school' ? 'Школа' : gf.zone_type === 'home' ? 'Дом' : 'Маршрут'}
-                </Text>
-                <Text style={styles.meta}>Точек: {gf.coordinates.length}</Text>
-              </>
-            );
-          })()
-        ) : selectedStudent ? (
-          <>
-            <Text style={styles.name}>{selectedStudent.student.full_name}</Text>
-            <Text style={styles.meta}>
-              Класс {selectedStudent.student.class_name}
-              {selectedStudent.location
-                ? ` • Заряд: ${selectedStudent.location.battery ?? '—'}%`
-                : ''}
-            </Text>
-            <Text style={styles.meta}>
-              {selectedStudent.location
-                ? `Обновлено: ${new Date(selectedStudent.location.recorded_at).toLocaleTimeString()}`
-                : 'Нет данных о местоположении'}
-            </Text>
-            <View style={styles.actions}>
-              <TouchableOpacity style={styles.btn} onPress={centerOnStudent}>
-                <Feather name="map-pin" size={14} color="white" />
-                <Text style={styles.btnText}> Центрировать</Text>
-              </TouchableOpacity>
-              {selectedStudent.student.device && (
-                <TouchableOpacity
-                  style={[styles.btn, locating ? styles.btnDisabled : null]}
-                  onPress={handleLocateNow}
-                  disabled={locating !== null}
-                >
-                  {locating === selectedStudent.student.id ? (
-                    <ActivityIndicator size="small" color="white" />
-                  ) : (
-                    <>
-                      <Feather name="wifi" size={14} color="white" />
-                      <Text style={styles.btnText}> Найти сейчас</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              )}
-            </View>
-          </>
-        ) : (
-          <Text style={styles.empty}>Нет учеников</Text>
+          </View>
         )}
+
+        <View style={{ borderTopWidth: 1, borderTopColor: '#e2e8f0', marginTop: 8, paddingTop: 8 }}>
+          {selectedGeofenceId !== null ? (
+            (() => {
+              const gf = geofences.find((g) => g.id === selectedGeofenceId);
+              if (!gf) return null;
+              return (
+                <>
+                  <Text style={styles.name}>{gf.name}</Text>
+                  <Text style={styles.meta}>
+                    Тип: {gf.zone_type === 'school' ? 'Школа' : gf.zone_type === 'home' ? 'Дом' : 'Маршрут'}
+                  </Text>
+                  <Text style={styles.meta}>Точек: {gf.coordinates.length}</Text>
+                </>
+              );
+            })()
+          ) : selectedStudent ? (
+            <>
+              <Text style={styles.name}>{selectedStudent.student.full_name}</Text>
+              <Text style={styles.meta}>
+                Класс {selectedStudent.student.class_name}
+                {selectedStudent.location
+                  ? ` • Заряд: ${selectedStudent.location.battery ?? '—'}%`
+                  : ''}
+              </Text>
+              <Text style={styles.meta}>
+                {selectedStudent.location
+                  ? `Обновлено: ${new Date(selectedStudent.location.recorded_at).toLocaleTimeString()}`
+                  : 'Нет данных о местоположении'}
+              </Text>
+              <View style={styles.actions}>
+                <TouchableOpacity style={styles.btn} onPress={centerOnStudent}>
+                  <Feather name="map-pin" size={14} color="white" />
+                  <Text style={styles.btnText}> Центрировать</Text>
+                </TouchableOpacity>
+                {selectedStudent.student.device && (
+                  <TouchableOpacity
+                    style={[styles.btn, locating ? styles.btnDisabled : null]}
+                    onPress={handleLocateNow}
+                    disabled={locating !== null}
+                  >
+                    {locating === selectedStudent.student.id ? (
+                      <ActivityIndicator size="small" color="white" />
+                    ) : (
+                      <>
+                        <Feather name="wifi" size={14} color="white" />
+                        <Text style={styles.btnText}> Найти сейчас</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
+            </>
+          ) : (
+            <Text style={styles.empty}>Нет учеников</Text>
+          )}
+        </View>
       </View>
     </View>
   );
@@ -265,46 +276,6 @@ export default function MapScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   map: { flex: 1 },
-  geofenceBar: {
-    position: 'absolute',
-    top: 12,
-    left: 0,
-    right: 0,
-    height: 40,
-  },
-  geoChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'white',
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderWidth: 1.5,
-    borderColor: '#e2e8f0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 3,
-  },
-  geoChipActive: {
-    backgroundColor: '#1e3a8a',
-    borderColor: '#1e3a8a',
-  },
-  geoChipDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 6,
-  },
-  geoChipText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#334155',
-  },
-  geoChipTextActive: {
-    color: 'white',
-  },
   bottomCard: {
     backgroundColor: 'white',
     borderTopLeftRadius: 16,
@@ -316,6 +287,58 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 8,
     elevation: 8,
+    maxHeight: 300,
+  },
+  geoDropdownToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 8,
+    padding: 10,
+  },
+  geoDropdownText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0f172a',
+  },
+  geoDropdownList: {
+    marginTop: 6,
+    backgroundColor: 'white',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    maxHeight: 180,
+  },
+  geoDropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  geoDropdownItemActive: {
+    backgroundColor: '#eef2ff',
+  },
+  geoDropdownItemDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  geoDropdownItemText: {
+    fontSize: 14,
+    color: '#334155',
+    flex: 1,
+  },
+  geoDropdownItemTextActive: {
+    fontWeight: '700',
+    color: '#1e3a8a',
+  },
+  geoDropdownItemType: {
+    fontSize: 11,
+    color: '#94a3b8',
+    marginLeft: 8,
   },
   name: { fontSize: 18, fontWeight: '700', color: '#0f172a' },
   meta: { fontSize: 13, color: '#64748b', marginTop: 2 },
