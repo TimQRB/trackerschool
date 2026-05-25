@@ -34,6 +34,18 @@ export default function Dashboard({ user, onLogout }: Props) {
   const [selectedClass, setSelectedClass] = useState("");
   const [pageSize, setPageSize] = useState<number>(20); 
 
+  async function handleAck(eventId: number) {
+    try {
+      await api.ackEvent(eventId);
+      setEvents((prev) =>
+        prev.map((e) => (e.id === eventId ? { ...e, acknowledged: true } : e))
+      );
+    } catch (err) {
+      console.error("Не удалось подтвердить событие:", err);
+      alert("Ошибка при подтверждении события");
+    }
+  }
+
   async function loadAll() {
     setLoading(true);
     try {
@@ -96,6 +108,18 @@ export default function Dashboard({ user, onLogout }: Props) {
   const visibleLive = useMemo(() => {
     return filteredLive.slice(0, pageSize);
   }, [filteredLive, pageSize]);
+
+  const filteredEvents = useMemo(() => {
+  // Если фильтры не выбраны (поиск пустой и класс не выбран), возвращаем все события без изменений
+  if (searchQuery === "" && selectedClass === "") {
+    return events;
+  }
+
+  const allowedStudentIds = new Set(filteredLive.map(item => item.student.id));
+
+  // Оставляем только те события, которые принадлежат отфильтрованным ученикам
+  return events.filter(event => allowedStudentIds.has(event.student_id));
+}, [events, filteredLive, searchQuery, selectedClass]);
 
   const connected = useLiveBus((msg) => {
     if (msg.type === "location") {
@@ -225,12 +249,47 @@ export default function Dashboard({ user, onLogout }: Props) {
 
           <div style={{ height: "250px", borderTop: "2px solid #e2e8f0", overflowY: "auto", paddingTop: 8 }}>
             <h3>События (24ч)</h3>
-            {events.length === 0 && <div style={{ fontSize: 13, color: "#64748b" }}>Пока пусто</div>}
-            {events.slice(0, 30).map((e) => (
-              <div key={e.id} className={`event-item ${e.severity}`}>
-                <div><b>{EVENT_LABELS[e.event_type] || e.event_type}</b></div>
-                <div>{e.message}</div>
-                <div className="time">{new Date(e.created_at).toLocaleString()}</div>
+            {filteredEvents.length === 0 && <div style={{ fontSize: 13, color: "#64748b", textAlign: "center", padding: "10px 0" }}>Нет событий для выбранных фильтров</div>}
+            {filteredEvents.slice(0, 30).map((e) => (
+              <div 
+                key={e.id} 
+                className={`event-item ${e.severity}`}
+                style={{
+                  padding: "10px",
+                  marginBottom: "8px",
+                  borderRadius: "8px",
+                  borderLeft: e.severity === "critical" || e.event_type === "sos" ? "4px solid #dc2626" : "4px solid #3b82f6",
+                  background: e.acknowledged ? "#f8fafc" : "#ffffff",
+                  opacity: e.acknowledged ? 0.6 : 1,
+                  boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+                  transition: "all 0.2s ease"
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <b>{EVENT_LABELS[e.event_type] || e.event_type}</b>
+                  {(user.role === "admin" || user.role === "school") && !e.acknowledged && (
+                    <button
+                      onClick={() => handleAck(e.id)}
+                      style={{
+                        padding: "2px 8px",
+                        fontSize: "11px",
+                        background: "#10b981",
+                        color: "white",
+                        border: "none",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        fontWeight: 600
+                      }}
+                    >
+                      ✓ Ок
+                    </button>
+                  )}
+                </div>
+                <div style={{ fontSize: "13px", marginTop: "4px", color: "#334155" }}>{e.message}</div>
+                <div className="time" style={{ fontSize: "11px", color: "#94a3b8", marginTop: "6px" }}>
+                  {new Date(e.created_at).toLocaleString()} 
+                  {e.acknowledged && <span style={{ color: "#10b981", marginLeft: "6px", fontWeight: 600 }}>[Проверено]</span>}
+                </div>
               </div>
             ))}
           </div>
