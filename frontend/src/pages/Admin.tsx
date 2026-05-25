@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { MapContainer, TileLayer, Polygon, Marker, useMapEvents } from "react-leaflet";
 import { Link } from "react-router-dom";
 import { api, atApi, Contact, Device, Geofence, Student, User } from "../api";
 import { WS_URL } from "../api";
+import L from "leaflet";
+import icon from "leaflet/dist/images/marker-icon.png";
+import iconShadow from "leaflet/dist/images/marker-shadow.png";
+let DefaultIcon = L.icon({
+  iconUrl: icon,
+  shadowUrl: iconShadow,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+});
+L.Marker.prototype.options.icon = DefaultIcon;
 
 interface Props {
   user: User;
@@ -488,101 +499,244 @@ function GeofencesTab() {
   const [zoneType, setZoneType] = useState("school");
   const [studentId, setStudentId] = useState<string>("");
   const [coords, setCoords] = useState("");
+  const [drawnPoints, setDrawnPoints] = useState<[number, number][]>([]);
 
   async function load() {
-    setItems(await api.listGeofences());
-    setStudents(await api.listStudents());
+    try {
+      setItems(await api.listGeofences());
+      setStudents(await api.listStudents());
+    } catch (err) {
+      console.error("Ошибка загрузки данных:", err);
+    }
   }
   useEffect(() => { load(); }, []);
 
+  function MapClickHandler() {
+    useMapEvents({
+      click(e) {
+        setDrawnPoints((prev) => [...prev, [e.latlng.lat, e.latlng.lng]]);
+      },
+    });
+    return null;
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    let parsed: number[][];
-    try {
-      parsed = JSON.parse(coords);
-      if (!Array.isArray(parsed) || parsed.length < 3) throw new Error();
-    } catch {
-      alert("Координаты должны быть JSON-массивом [[lon,lat], ...], минимум 3 точки");
+
+    if (drawnPoints.length < 3) {
+      alert("Пожалуйста, поставьте минимум 3 точки на карте, чтобы образовать геозону!");
       return;
     }
-    await api.createGeofence({
-      name,
-      zone_type: zoneType,
-      coordinates: parsed,
-      student_id: studentId ? Number(studentId) : null,
-    });
-    setName(""); setCoords(""); setStudentId("");
-    load();
+
+    // (модуль Shapely/PostGIS) ждет координаты в формате [[долгота, широта], ...]
+    // А Leaflet хранит как [широта, долгота]. При отправке меняем их местами: [lon, lat]
+    const formattedCoordinates = drawnPoints.map((p) => [p[1], p[0]]);
+
+    try {
+      await api.createGeofence({
+        name,
+        zone_type: zoneType,
+        coordinates: formattedCoordinates,
+        student_id: studentId ? Number(studentId) : null,
+      });
+      setName("");
+      setStudentId("");
+      setDrawnPoints([]);
+      load();
+      alert("Геозона успешно создана!");
+    } catch (err: any) {
+      console.error(err);
+      alert("Ошибка при создании геозоны на бэкенде");
+    }
   }
 
   async function remove(id: number) {
     if (!confirm("Удалить геозону?")) return;
-    await api.deleteGeofence(id);
-    load();
+    try {
+      await api.deleteGeofence(id);
+      load();
+    } catch (err) {
+      alert("Не удалось удалить геозону");
+    }
   }
 
   return (
-    <div>
-      <h3>Геозоны</h3>
-      <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 20 }}>
-        <thead>
-          <tr style={{ background: "#f1f5f9", textAlign: "left" }}>
-            <th style={{ padding: 8 }}>Название</th>
-            <th style={{ padding: 8 }}>Тип</th>
-            <th style={{ padding: 8 }}>Ученик ID</th>
-            <th style={{ padding: 8 }}>Точек</th>
-            <th style={{ padding: 8 }}></th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((g) => (
-            <tr key={g.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
-              <td style={{ padding: 8 }}>{g.name}</td>
-              <td style={{ padding: 8 }}>{g.zone_type}</td>
-              <td style={{ padding: 8 }}>{g.student_id ?? "общая"}</td>
-              <td style={{ padding: 8 }}>{g.coordinates.length}</td>
-              <td style={{ padding: 8 }}>
-                <button onClick={() => remove(g.id)} style={{ color: "#dc2626" }}>удалить</button>
-              </td>
+    <div style={{ padding: "20px" }}>
+      <h3 style={{ marginBottom: "16px", color: "#1e293b" }}>Управление Геозонами</h3>      
+      <div style={{ background: "white", borderRadius: "8px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", overflow: "hidden", marginBottom: "30px" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0", textAlign: "left" }}>
+              <th style={{ padding: "12px 16px", color: "#64748b", fontWeight: 600 }}>Название</th>
+              <th style={{ padding: "12px 16px", color: "#64748b", fontWeight: 600 }}>Тип</th>
+              <th style={{ padding: "12px 16px", color: "#64748b", fontWeight: 600 }}>Область видимости</th>
+              <th style={{ padding: "12px 16px", color: "#64748b", fontWeight: 600 }}>Кол-во точек</th>
+              <th style={{ padding: "12px 16px" }}></th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <form onSubmit={submit} style={{ maxWidth: 500 }}>
-        <h4>Добавить геозону</h4>
-        <div className="form-row">
-          <label>Название</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} required />
-        </div>
-        <div className="form-row">
-          <label>Тип</label>
-          <select value={zoneType} onChange={(e) => setZoneType(e.target.value)}>
-            <option value="school">Школа</option>
-            <option value="home">Дом</option>
-            <option value="route">Маршрут</option>
-          </select>
-        </div>
-        <div className="form-row">
-          <label>Ученик (для зон типа «дом»)</label>
-          <select value={studentId} onChange={(e) => setStudentId(e.target.value)}>
-            <option value="">— общая зона —</option>
-            {students.map((s) => (
-              <option key={s.id} value={s.id}>{s.full_name}</option>
+          </thead>
+          <tbody>
+            {items.length === 0 && (
+              <tr>
+                <td colSpan={5} style={{ padding: "16px", textAlign: "center", color: "#94a3b8" }}>Геозоны еще не созданы</td>
+              </tr>
+            )}
+            {items.map((g) => (
+              <tr key={g.id} style={{ borderBottom: "1px solid #e2e8f0", fill: "none" }}>
+                <td style={{ padding: "12px 16px", fontWeight: 500 }}>{g.name}</td>
+                <td style={{ padding: "12px 16px" }}>
+                  <span style={{ padding: "4px 8px", borderRadius: "4px", fontSize: "12px", background: g.zone_type === "school" ? "#dbeafe" : "#fef08a", color: g.zone_type === "school" ? "#1e40af" : "#854d0e" }}>
+                    {g.zone_type === "school" ? "Школа" : g.zone_type === "home" ? "Дом" : "Маршрут"}
+                  </span>
+                </td>
+                <td style={{ padding: "12px 16px", color: "#475569" }}>
+                  {g.student_id ? (
+                    (() => {
+                      // Ищем студента в массиве по ID
+                      const foundStudent = students.find((s) => s.id === g.student_id);
+                      return (
+                        <span style={{ color: "#1e293b", fontWeight: 500 }}>
+                          👤 Личная: {foundStudent ? foundStudent.full_name : `Ученик (ID: ${g.student_id})`}
+                        </span>
+                      );
+                    })()
+                  ) : (
+                    <span style={{ color: "#2563eb", fontWeight: 500 }}>
+                      🌍 Общая зона (для всей школы)
+                    </span>
+                  )}
+                </td>
+                <td style={{ padding: "12px 16px" }}>{g.coordinates.length} точек</td>
+                <td style={{ padding: "12px 16px", textAlign: "right" }}>
+                  <button 
+                    onClick={() => remove(g.id)} 
+                    style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontWeight: 600 }}
+                  >
+                    Удалить
+                  </button>
+                </td>
+              </tr>
             ))}
-          </select>
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 400px", gap: "24px", alignItems: "start" }}>        
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          <div style={{ fontSize: "14px", fontWeight: 600, color: "#475569" }}>
+            🗺️ Кликните по карте минимум 3 раза, чтобы построить границы зоны:
+          </div>
+          <div style={{ height: "450px", width: "100%", borderRadius: "8px", overflow: "hidden", border: "1px solid #cbd5e1" }}>
+            <MapContainer 
+              center={[43.238, 76.928]} // Дефолтный центр
+              zoom={14} 
+              style={{ height: "100%", width: "100%" }}
+            >
+              <TileLayer
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+              />
+              <MapClickHandler />
+              {drawnPoints.map((pt, idx) => (
+                <Marker key={idx} position={pt} />
+              ))}
+
+              {drawnPoints.length > 1 && (
+                <Polygon 
+                  positions={drawnPoints} 
+                  pathOptions={{ color: zoneType === "school" ? "#2563eb" : "#eab308", fillColor: zoneType === "school" ? "#3b82f6" : "#fef08a", fillOpacity: 0.4 }} 
+                />
+              )}
+
+              {items.map((fence) => {
+                const leafletCoords = fence.coordinates.map(c => [c[1], c[0]] as [number, number]);
+                return (
+                  <Polygon
+                    key={fence.id}
+                    positions={leafletCoords}
+                    pathOptions={{ color: "#94a3b8", dashArray: "5, 5", fillOpacity: 0.1 }}
+                  />
+                );
+              })}
+            </MapContainer>
+          </div>
+          {drawnPoints.length > 0 && (
+            <div style={{ display: "flex", gap: "10px", marginTop: "4px" }}>
+              <button 
+                type="button" 
+                onClick={() => {
+                  setDrawnPoints((prev) => prev.slice(0, -1));
+                }}
+                style={{ padding: "6px 12px", background: "#f59e0b", color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontSize: "12px", fontWeight: 600 }}
+              >
+                ↩️ Удалить последнюю точку
+              </button>
+
+              <button 
+                type="button" 
+                onClick={() => setDrawnPoints([])}
+                style={{ padding: "6px 12px", background: "#ef4444", color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontSize: "12px", fontWeight: 600 }}
+              >
+                🗑️ Сбросить все точки
+              </button>
+            </div>
+          )}
         </div>
-        <div className="form-row">
-          <label>Координаты JSON [[долгота, широта], ...]</label>
-          <input
-            value={coords}
-            onChange={(e) => setCoords(e.target.value)}
-            placeholder='[[76.928,43.238],[76.930,43.238],[76.930,43.240],[76.928,43.240]]'
-            required
-          />
-        </div>
-        <button className="btn-primary" type="submit">Создать</button>
-      </form>
+        <form onSubmit={submit} style={{ background: "white", padding: "20px", borderRadius: "8px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", border: "1px solid #e2e8f0" }}>
+          <h4 style={{ margin: "0 0 16px 0", color: "#1e293b" }}>Параметры зоны</h4>
+          
+          <div style={{ marginBottom: "14px" }}>
+            <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Название</label>
+            <input 
+              value={name} 
+              onChange={(e) => setName(e.target.value)} 
+              placeholder="Например: Территория школы №42"
+              required 
+              style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", boxSizing: "border-box" }}
+            />
+          </div>
+
+          <div style={{ marginBottom: "14px" }}>
+            <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Тип зоны</label>
+            <select 
+              value={zoneType} 
+              onChange={(e) => setZoneType(e.target.value)}
+              style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", background: "white" }}
+            >
+              <option value="school">Школа</option>
+              <option value="home">Дом</option>
+              <option value="route">Маршрут</option>
+            </select>
+          </div>
+
+          <div style={{ marginBottom: "20px" }}>
+            <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Ученик (область видимости)</label>
+            <select 
+              value={studentId} 
+              onChange={(e) => setStudentId(e.target.value)}
+              style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", background: "white" }}
+            >
+              <option value="">— Общая зона школы —</option>
+              {students.map((s) => (
+                <option key={s.id} value={s.id}>{s.full_name} ({s.class_name})</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ padding: "12px", background: "#f8fafc", borderRadius: "6px", marginBottom: "16px", border: "1px solid #e2e8f0" }}>
+            <span style={{ fontSize: "12px", color: "#64748b" }}>
+              Выбрано точек на карте: <strong style={{ color: "#1e293b" }}>{drawnPoints.length}</strong>
+              {drawnPoints.length < 3 && " (нужно минимум 3)"}
+            </span>
+          </div>
+          <button 
+            className="btn-primary" 
+            type="submit"
+            disabled={drawnPoints.length < 3}
+            style={{ width: "100%", padding: "10px", background: drawnPoints.length < 3 ? "#94a3b8" : "#2563eb", color: "white", border: "none", borderRadius: "6px", fontWeight: 600, cursor: drawnPoints.length < 3 ? "not-allowed" : "pointer" }}
+          >
+            Сохранить геозону
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
