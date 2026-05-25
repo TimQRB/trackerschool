@@ -81,11 +81,17 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
   const connected = useWebSocket(handleMessage);
 
   const loadInitialData = useCallback(async () => {
-    const [studentList, fences, evts] = await Promise.all([
-      api.get<Student[]>('/api/students'),
-      api.get<Geofence[]>('/api/geofences'),
-      api.get<TrackEvent[]>('/api/events?hours=24'),
-    ]);
+    let studentList, fences, evts;
+    try {
+      [studentList, fences, evts] = await Promise.all([
+        api.get<Student[]>('/api/students'),
+        api.get<Geofence[]>('/api/geofences'),
+        api.get<TrackEvent[]>('/api/events?hours=24'),
+      ]);
+    } catch (e) {
+      console.error('Ошибка загрузки начальных данных:', e);
+      return;
+    }
     setGeofences(fences.data);
     setEvents(evts.data);
 

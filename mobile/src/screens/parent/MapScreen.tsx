@@ -1,6 +1,6 @@
 import { useRef, useCallback, useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator } from 'react-native';
-import MapView, { Region } from 'react-native-maps';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator, ScrollView } from 'react-native';
+import MapView, { Marker, Callout, Region } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useLive } from '../../context/LiveContext';
@@ -8,6 +8,7 @@ import { api } from '../../api/client';
 import StudentMarker from '../../components/StudentMarker';
 import GeofencePolygon from '../../components/GeofencePolygon';
 import RoutePolyline from '../../components/RoutePolyline';
+import type { Geofence } from '../../api/types';
 
 const INITIAL_REGION: Region = {
   latitude: 43.238,
@@ -16,15 +17,35 @@ const INITIAL_REGION: Region = {
   longitudeDelta: 0.05,
 };
 
+const ZONE_COLORS: Record<string, string> = {
+  school: '#3b82f6',
+  home: '#22c55e',
+  route: '#f59e0b',
+};
+
+function geofenceCenter(gf: Geofence): { latitude: number; longitude: number } {
+  let latSum = 0, lonSum = 0;
+  for (const [lon, lat] of gf.coordinates) {
+    latSum += lat;
+    lonSum += lon;
+  }
+  return {
+    latitude: latSum / gf.coordinates.length,
+    longitude: lonSum / gf.coordinates.length,
+  };
+}
+
 export default function MapScreen() {
   const insets = useSafeAreaInsets();
   const mapRef = useRef<MapView>(null);
   const { students, geofences, selectedStudentId, setSelectedStudentId } = useLive();
   const [locating, setLocating] = useState<number | null>(null);
+  const [selectedGeofenceId, setSelectedGeofenceId] = useState<number | null>(null);
 
   const selectedStudent = students.find((s) => s.student.id === selectedStudentId);
 
   const centerOnStudent = useCallback(() => {
+    setSelectedGeofenceId(null);
     const s = selectedStudent || students[0];
     if (s?.location) {
       mapRef.current?.animateToRegion(
@@ -38,6 +59,20 @@ export default function MapScreen() {
       );
     }
   }, [selectedStudent, students]);
+
+  const centerOnGeofence = useCallback((gf: Geofence) => {
+    setSelectedGeofenceId(gf.id);
+    const center = geofenceCenter(gf);
+    mapRef.current?.animateToRegion(
+      {
+        latitude: center.latitude,
+        longitude: center.longitude,
+        latitudeDelta: 0.02,
+        longitudeDelta: 0.02,
+      },
+      800,
+    );
+  }, []);
 
   const handleLocateNow = async () => {
     const s = selectedStudent || students[0];
@@ -57,6 +92,7 @@ export default function MapScreen() {
 
   useEffect(() => {
     if (selectedStudent?.location && mapRef.current) {
+      setSelectedGeofenceId(null);
       mapRef.current.animateToRegion(
         {
           latitude: selectedStudent.location.lat,
@@ -80,8 +116,27 @@ export default function MapScreen() {
         mapPadding={{ top: 50, right: 16, bottom: 0, left: 16 }}
       >
         {geofences.map((g) => (
-          <GeofencePolygon key={g.id} geofence={g} />
+          <GeofencePolygon key={g.id} geofence={g} onPress={centerOnGeofence} />
         ))}
+        {selectedGeofenceId !== null && (() => {
+          const gf = geofences.find(g => g.id === selectedGeofenceId);
+          if (!gf) return null;
+          const center = geofenceCenter(gf);
+          const color = ZONE_COLORS[gf.zone_type] || '#64748b';
+          return (
+            <Marker coordinate={center} pinColor={color}>
+              <Callout>
+                <View style={{ padding: 4, minWidth: 120 }}>
+                  <Text style={{ fontWeight: '700', fontSize: 14, color: '#0f172a' }}>{gf.name}</Text>
+                  <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+                    {gf.zone_type === 'school' ? 'Школа' : gf.zone_type === 'home' ? 'Дом' : 'Маршрут'}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>Точек: {gf.coordinates.length}</Text>
+                </View>
+              </Callout>
+            </Marker>
+          );
+        })()}
 
         {students.map(({ student, location, track }) => (
           <View key={student.id}>
@@ -103,8 +158,66 @@ export default function MapScreen() {
         ))}
       </MapView>
 
+      {geofences.length > 0 && (
+        <View style={styles.geofenceBar}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingHorizontal: 16 }}>
+            <TouchableOpacity
+              style={[styles.geoChip, selectedGeofenceId === null && styles.geoChipActive]}
+              onPress={() => {
+                setSelectedGeofenceId(null);
+                if (selectedStudent?.location) {
+                  mapRef.current?.animateToRegion(
+                    {
+                      latitude: selectedStudent.location.lat,
+                      longitude: selectedStudent.location.lon,
+                      latitudeDelta: 0.05,
+                      longitudeDelta: 0.05,
+                    },
+                    800,
+                  );
+                }
+              }}
+            >
+              <Text style={[styles.geoChipText, selectedGeofenceId === null && styles.geoChipTextActive]}>
+                Все
+              </Text>
+            </TouchableOpacity>
+            {geofences.map((g) => {
+              const isActive = selectedGeofenceId === g.id;
+              const color = ZONE_COLORS[g.zone_type] || '#64748b';
+              return (
+                <TouchableOpacity
+                  key={g.id}
+                  style={[styles.geoChip, isActive && { backgroundColor: color, borderColor: color }]}
+                  onPress={() => centerOnGeofence(g)}
+                >
+                  <View style={[styles.geoChipDot, { backgroundColor: color }]} />
+                  <Text style={[styles.geoChipText, isActive && styles.geoChipTextActive]}>
+                    {g.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+
       <View style={[styles.bottomCard, { paddingBottom: Math.max(insets.bottom, 16) + 12 }]}>
-        {selectedStudent ? (
+        {selectedGeofenceId !== null ? (
+          (() => {
+            const gf = geofences.find((g) => g.id === selectedGeofenceId);
+            if (!gf) return null;
+            return (
+              <>
+                <Text style={styles.name}>{gf.name}</Text>
+                <Text style={styles.meta}>
+                  Тип: {gf.zone_type === 'school' ? 'Школа' : gf.zone_type === 'home' ? 'Дом' : 'Маршрут'}
+                </Text>
+                <Text style={styles.meta}>Точек: {gf.coordinates.length}</Text>
+              </>
+            );
+          })()
+        ) : selectedStudent ? (
           <>
             <Text style={styles.name}>{selectedStudent.student.full_name}</Text>
             <Text style={styles.meta}>
@@ -152,6 +265,46 @@ export default function MapScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   map: { flex: 1 },
+  geofenceBar: {
+    position: 'absolute',
+    top: 12,
+    left: 0,
+    right: 0,
+    height: 40,
+  },
+  geoChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'white',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  geoChipActive: {
+    backgroundColor: '#1e3a8a',
+    borderColor: '#1e3a8a',
+  },
+  geoChipDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  geoChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  geoChipTextActive: {
+    color: 'white',
+  },
   bottomCard: {
     backgroundColor: 'white',
     borderTopLeftRadius: 16,
