@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { api, Event, Geofence, LocationPoint, Student, User } from "../api";
 import MapView from "../components/MapView";
+import TrackHistoryPanel from "../components/TrackHistoryPanel";
 import { useLiveBus } from "../useLiveBus";
 
 interface Props {
@@ -32,7 +33,8 @@ export default function Dashboard({ user, onLogout }: Props) {
   const [loading, setLoading] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedClass, setSelectedClass] = useState("");
-  const [pageSize, setPageSize] = useState<number>(20); 
+  const [pageSize, setPageSize] = useState<number>(20);
+  const [historyTrack, setHistoryTrack] = useState<any[] | null>(null);
 
   async function handleAck(eventId: number) {
     try {
@@ -192,6 +194,11 @@ export default function Dashboard({ user, onLogout }: Props) {
             </select>
           </div>
 
+          <TrackHistoryPanel 
+            selectedStudentId={selectedId}
+            onTrackLoaded={(points) => setHistoryTrack(points)} 
+          />
+
           <div style={{ flex: 1, overflowY: "auto", paddingRight: 4, marginTop: 8 }}>
             <h3>Ученики ({filteredLive.length})</h3>
             {loading && <div style={{ fontSize: 13, color: "#64748b" }}>Загрузка данных...</div>}
@@ -246,7 +253,6 @@ export default function Dashboard({ user, onLogout }: Props) {
               </button>
             )}
           </div>
-
           <div style={{ height: "250px", borderTop: "2px solid #e2e8f0", overflowY: "auto", paddingTop: 8 }}>
             <h3>События (24ч)</h3>
             {filteredEvents.length === 0 && <div style={{ fontSize: 13, color: "#64748b", textAlign: "center", padding: "10px 0" }}>Нет событий для выбранных фильтров</div>}
@@ -291,6 +297,7 @@ export default function Dashboard({ user, onLogout }: Props) {
                   {e.acknowledged && <span style={{ color: "#10b981", marginLeft: "6px", fontWeight: 600 }}>[Проверено]</span>}
                 </div>
               </div>
+              
             ))}
           </div>
         </aside>
@@ -302,6 +309,7 @@ export default function Dashboard({ user, onLogout }: Props) {
             selectedStudentId={selectedId}
             focusTrigger={focusTrigger}
             events={events}
+            historyTrack={historyTrack}
           />
         </main>
       </div>

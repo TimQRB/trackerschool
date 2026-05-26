@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState} from "react";
 import L from "leaflet";
+import { Polyline, CircleMarker, Popup } from "react-leaflet";
 import { Geofence, LocationPoint, Student, Event } from "../api";
 
 interface LiveStudent {
@@ -15,6 +16,7 @@ interface Props {
   center?: [number, number];
   focusTrigger?: number;
   events: Event[];
+  historyTrack: any[] | null;
 }
 
 const ZONE_COLORS: Record<string, string> = {
@@ -23,7 +25,7 @@ const ZONE_COLORS: Record<string, string> = {
   route: "#f59e0b",
 };
 
-export default function MapView({ students, geofences, selectedStudentId, center, focusTrigger, events }: Props) {
+export default function MapView({ students, geofences, selectedStudentId, center, focusTrigger, events, historyTrack }: Props) {
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const layersRef = useRef<L.LayerGroup | null>(null);
@@ -31,6 +33,8 @@ export default function MapView({ students, geofences, selectedStudentId, center
   // Храним ID студента, на которого мы УЖЕ сфокусировались, чтобы не прыгать постоянно
   const [lastCenteredId, setLastCenteredId] = useState<number | null>(null);
   const lastTriggerRef = useRef<number>(0);
+
+  const [lastTrackLength, setLastTrackLength] = useState<number>(0);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -68,6 +72,52 @@ export default function MapView({ students, geofences, selectedStudentId, center
         .bindTooltip(`${g.name} (${g.zone_type})`, { sticky: true })
         .addTo(layers);
     });
+
+    if (historyTrack && historyTrack.length > 0) {
+      const latlngs = historyTrack.map((pt) => [pt.lat, pt.lon] as [number, number]);
+
+      L.polyline(latlngs, {
+        color: "#2563eb",
+        weight: 5,
+        opacity: 0.8,
+        lineJoin: "round"
+      }).addTo(layers);
+
+      historyTrack.forEach((pt, idx) => {
+        const isFirst = idx === 0;
+        const isLast = idx === historyTrack.length - 1;
+
+        // Кастомные стили для Старта (зеленый), Финиша (красный) и промежуточных (синие)
+        L.circleMarker([pt.lat, pt.lon], {
+          radius: isFirst || isLast ? 7 : 4,
+          color: isFirst ? "#10b981" : isLast ? "#ef4444" : "#2563eb",
+          fillColor: isFirst ? "#10b981" : isLast ? "#ef4444" : "#ffffff",
+          fillOpacity: 1,
+          weight: 2,
+        })
+        .bindPopup(`
+          <div style="font-family: sans-serif; font-size: 13px;">
+            <b style="color: ${isFirst ? '#10b981' : isLast ? '#ef4444' : '#2563eb'}">
+              ${isFirst ? "🏁 Начало пути" : isLast ? "📍 Конечная точка" : `Точка №${idx + 1}`}
+            </b><br/>
+            <b>Время:</b> ${new Date(pt.recorded_at).toLocaleTimeString("ru-RU", { hour: '2-digit', minute: '2-digit' })}<br/>
+            <b>Заряд:</b> ${pt.battery ?? "—"}%<br/>
+            <b>Скорость:</b> ${pt.speed ? `${pt.speed} км/ч` : "0 км/ч"}
+          </div>
+        `)
+        .addTo(layers);
+      });
+
+      // Автоматически подгоняем масштаб карты, чтобы весь трек поместился в экран
+      if (historyTrack.length !== lastTrackLength) {
+        const bounds = L.latLngBounds(latlngs);
+        map.fitBounds(bounds, { padding: [50, 50] });
+        setLastTrackLength(historyTrack.length);
+      }
+
+    } else {
+      // Сбрасываем счетчик истории, если её закрыли
+      if (lastTrackLength !== 0) setLastTrackLength(0);
 
     students.forEach(({ student, point, track }) => {
       if (track.length > 1) {
@@ -162,7 +212,8 @@ export default function MapView({ students, geofences, selectedStudentId, center
         }
       }
     }
-  }, [students, geofences, selectedStudentId, lastCenteredId, focusTrigger, events]);
+   }
+  }, [students, geofences, selectedStudentId, lastCenteredId, focusTrigger, events, historyTrack]);
 
   return <div ref={containerRef} className="map-container" />;
 }

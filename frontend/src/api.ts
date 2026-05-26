@@ -147,6 +147,7 @@ export const api = {
   deleteContact: (id: number) => request<void>(`/api/contacts/${id}`, { method: "DELETE" }),
   deleteStudent: (id: number) => request<void>(`/api/students/${id}`, { method: "DELETE" }),
   
+  
   bulkDeleteStudents: (ids: number[]) => 
     request<{ status: string; message: string }>("/api/students/bulk-delete", {
       method: "DELETE",

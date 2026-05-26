@@ -591,7 +591,6 @@ function GeofencesTab() {
                 <td style={{ padding: "12px 16px", color: "#475569" }}>
                   {g.student_id ? (
                     (() => {
-                      // Ищем студента в массиве по ID
                       const foundStudent = students.find((s) => s.id === g.student_id);
                       return (
                         <span style={{ color: "#1e293b", fontWeight: 500 }}>
