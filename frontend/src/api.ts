@@ -6,6 +6,7 @@ export interface User {
   email: string;
   full_name: string;
   role: "parent" | "school" | "admin";
+  school_id: number | null;
 }
 
 export interface Device {
@@ -26,6 +27,13 @@ export interface Student {
   parent_id: number | null;
   parent_email?: string | null;
   device: Device | null;
+  school_id: number | null;
+}
+
+export interface School {
+  id: number;
+  name: string;
+  address?: string | null;
 }
 
 export interface Geofence {
@@ -33,6 +41,7 @@ export interface Geofence {
   name: string;
   zone_type: "school" | "home" | "route";
   student_id: number | null;
+  school_id: number | null;
   coordinates: number[][];
 }
 
@@ -100,8 +109,13 @@ export const api = {
   me: () => request<User>("/api/auth/me"),
 
   listStudents: () => request<Student[]>("/api/students"),
-  createStudent: (data: { full_name: string; class_name: string; parent_id: number | null }) =>
+  createStudent: (data: { full_name: string; class_name: string; parent_id: number | null, school_id: number | null }) =>
     request<Student>("/api/students", { method: "POST", body: JSON.stringify(data) }),
+  
+  listSchools: () => request<School[]>("/api/schools"),
+  createSchool: (data: { name: string; address?: string }) =>
+    request<School>("/api/schools", { method: "POST", body: JSON.stringify(data) }),
+  deleteSchool: (id: number) => request<void>(`/api/schools/${id}`, { method: "DELETE" }),
 
   listDevices: () => request<Device[]>("/api/devices"),
   createDevice: (data: { identifier: string; student_id: number | null }) =>
@@ -120,6 +134,7 @@ export const api = {
     zone_type: string;
     coordinates: number[][];
     student_id: number | null;
+    school_id: number | null;
   }) => request<Geofence>("/api/geofences", { method: "POST", body: JSON.stringify(data) }),
   deleteGeofence: (id: number) => request<void>(`/api/geofences/${id}`, { method: "DELETE" }),
 
@@ -131,7 +146,7 @@ export const api = {
   track: (studentId: number, hours = 24) =>
     request<LocationPoint[]>(`/api/students/${studentId}/track?hours=${hours}`),
 
-  createUser: (data: { email: string; password: string; full_name: string; role: string }) =>
+  createUser: (data: { email: string; password: string; full_name: string; role: string, school_id?: number | null }) =>
     request<User>("/api/users", { method: "POST", body: JSON.stringify(data) }),
   listUsers: () => request<User[]>("/api/users"),
 
@@ -154,11 +169,13 @@ export const api = {
       body: JSON.stringify(ids),
     }),
 
-  importStudentsCSV: async (file: File) => {
+  importStudentsCSV: async (file: File, schoolId: string) => {
     const formData = new FormData();
     formData.append("file", file);
+    
+    const queryParam = schoolId ? `?school_id=${schoolId}` : "";
 
-    return request<{ status: string; message: string }>("/api/students/import-csv", {
+    return request<{ status: string; message: string }>(`/api/students/import-csv${queryParam}`, {
       method: "POST",
       body: formData,
       headers: {

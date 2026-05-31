@@ -24,6 +24,7 @@ def _to_out(g: Geofence) -> GeofenceOut:
         name=g.name,
         zone_type=g.zone_type,
         student_id=g.student_id,
+        school_id=g.school_id,
         coordinates=coords,
     )
 
@@ -34,18 +35,34 @@ def list_geofences(
     user: Annotated[User, Depends(get_current_user)],
 ):
     q = select(Geofence)
-    if user.role == Role.PARENT.value:
+    
+    if user.role == Role.ADMIN.value:
+        pass # Админ видит всё
+        
+    elif user.role == Role.SCHOOL.value:
+        # Школа видит только свои геозоны
+        q = q.where(Geofence.school_id == user.school_id)
+        
+    elif user.role == Role.PARENT.value:
+        # Родитель видит:
+        # 1. Зоны, привязанные к его детям (Дом)
+        # 2. Общие зоны школы, в которой учатся его дети
         student_ids = [s.id for s in user.students]
-        q = q.where((Geofence.student_id.in_(student_ids)) | (Geofence.student_id.is_(None)))
+        school_ids = list(set([s.school_id for s in user.students if s.school_id]))
+        
+        q = q.where(
+            (Geofence.student_id.in_(student_ids)) | 
+            ((Geofence.student_id.is_(None)) & (Geofence.school_id.in_(school_ids)))
+        )
+        
     fences = db.execute(q).scalars().all()
     return [_to_out(f) for f in fences]
-
 
 @router.post("", response_model=GeofenceOut, status_code=201)
 def create_geofence(
     payload: GeofenceCreate,
     db: Annotated[Session, Depends(get_db)],
-    _: Annotated[User, Depends(require_roles(Role.ADMIN.value, Role.SCHOOL.value))],
+    user: Annotated[User, Depends(require_roles(Role.ADMIN.value, Role.SCHOOL.value))],
 ):
     if payload.zone_type not in {z.value for z in ZoneType}:
         raise HTTPException(status_code=400, detail="Недопустимый тип зоны")
@@ -65,6 +82,7 @@ def create_geofence(
         zone_type=payload.zone_type,
         polygon=f"SRID=4326;{wkt.dumps(polygon)}",
         student_id=payload.student_id,
+        school_id=user.school_id if user.role == Role.SCHOOL.value else payload.school_id,
     )
     db.add(fence)
     db.commit()

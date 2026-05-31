@@ -6,7 +6,7 @@ from shapely.geometry import Polygon
 from sqlalchemy import select, text
 
 from .database import Base, SessionLocal, engine
-from .models import Device, Geofence, Role, Student, User, ZoneType
+from .models import Device, Geofence, Role, Student, User, ZoneType, School
 from .security import hash_password
 from .config import settings
 
@@ -28,6 +28,25 @@ def init() -> None:
 
     db = SessionLocal()
     try:
+        # 1. Сначала подкидываем новые колонки
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS school_id INTEGER REFERENCES schools(id)"))
+            conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS school_id INTEGER REFERENCES schools(id)"))
+            conn.execute(text("ALTER TABLE geofences ADD COLUMN IF NOT EXISTS school_id INTEGER REFERENCES schools(id)"))
+            conn.commit()
+
+        # 2. Создаем тестовую Школу (новая сущность)
+        demo_school = db.execute(select(School).where(School.name == "Школа №42")).scalar_one_or_none()
+        if not demo_school:
+            demo_school = School(
+                name="Школа №42",
+                address="г. Алматы, ул. Абая, 10"
+            )
+            db.add(demo_school)
+            db.commit()
+            db.refresh(demo_school)
+
+        # 3. Админ
         admin = db.execute(select(User).where(User.email == settings.admin_email)).scalar_one_or_none()
         if not admin:
             admin = User(
@@ -38,6 +57,7 @@ def init() -> None:
             )
             db.add(admin)
 
+        # 4. Родитель
         parent = db.execute(select(User).where(User.email == "parent@safemektep.kz")).scalar_one_or_none()
         if not parent:
             parent = User(
@@ -47,30 +67,44 @@ def init() -> None:
                 role=Role.PARENT.value,
             )
             db.add(parent)
+            db.commit()
+            db.refresh(parent)
 
-        school = db.execute(select(User).where(User.email == "school@safemektep.kz")).scalar_one_or_none()
-        if not school:
-            school = User(
+        # 5. Пользователь-Школа (Привязываем к демо-школе)
+        school_user = db.execute(select(User).where(User.email == "school@safemektep.kz")).scalar_one_or_none()
+        if not school_user:
+            school_user = User(
                 email="school@safemektep.kz",
                 password_hash=hash_password("school123"),
-                full_name="Школа №42",
+                full_name="Координатор Школы №42",
                 role=Role.SCHOOL.value,
+                school_id=demo_school.id
             )
-            db.add(school)
-        db.commit()
-        db.refresh(parent)
+            db.add(school_user)
+        else:
+            if school_user.school_id is None:
+                school_user.school_id = demo_school.id
 
+        db.commit()
+
+        # 6. Студент (Привязываем к демо-школе)
         student = db.execute(select(Student).where(Student.full_name == "Ержан Касымов")).scalar_one_or_none()
         if not student:
             student = Student(
                 full_name="Ержан Касымов",
                 class_name="5А",
                 parent_id=parent.id,
+                school_id=demo_school.id
             )
             db.add(student)
             db.commit()
             db.refresh(student)
+        else:
+            if student.school_id is None:
+                student.school_id = demo_school.id
+                db.commit()
 
+        # 7. Устройство
         device = db.execute(select(Device).where(Device.identifier == "DEMO-001")).scalar_one_or_none()
         if not device:
             device = Device(
@@ -91,7 +125,7 @@ def init() -> None:
             db.commit()
             db.refresh(device)
 
-        # School zone in Almaty (around Abai Square area)
+        # 8. Геозоны (Школа №42)
         existing_school_zone = db.execute(
             select(Geofence).where(Geofence.name == "Школа №42")
         ).scalar_one_or_none()
@@ -108,7 +142,11 @@ def init() -> None:
                 zone_type=ZoneType.SCHOOL.value,
                 polygon=f"SRID=4326;{wkt.dumps(school_poly)}",
                 student_id=None,
+                school_id=demo_school.id
             ))
+        else:
+            if existing_school_zone.school_id is None:
+                existing_school_zone.school_id = demo_school.id
 
         existing_home_zone = db.execute(
             select(Geofence).where(Geofence.name == "Дом Ержана")
@@ -131,7 +169,7 @@ def init() -> None:
         db.commit()
 
         print("=" * 60)
-        print("SafeMektep инициализирован")
+        print("SafeMektep initialized with Multi-School support")
         print(f"Админ:    {settings.admin_email} / {settings.admin_password}")
         print("Школа:    school@safemektep.kz / school123")
         print("Родитель: parent@safemektep.kz / parent123")

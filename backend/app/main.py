@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import bus
 from .init_db import init
-from .routers import auth, contacts, devices, events, geofences, locations, students, users, ws
+from .routers import auth, contacts, devices, events, geofences, locations, schools, students, users, ws
 from .routers import at_terminal, attendance, commands, device_config, health, notifications, sms
 
 
@@ -33,6 +33,7 @@ app.include_router(at_terminal.router)
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(students.router)
+app.include_router(schools.router)
 app.include_router(devices.router)
 app.include_router(geofences.router)
 app.include_router(locations.router)

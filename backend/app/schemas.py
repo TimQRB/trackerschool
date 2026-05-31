@@ -17,7 +17,23 @@ class TokenResponse(BaseModel):
     role: str
     full_name: str
     user_id: int
+    school_id: int | None = None
 
+# --- Schools ---
+
+class SchoolCreate(BaseModel):
+    name: str
+    address: str | None = None
+
+
+class SchoolOut(BaseModel):
+    id: int
+    name: str
+    address: str | None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 # --- Users ---
 
@@ -26,6 +42,7 @@ class UserCreate(BaseModel):
     password: str
     full_name: str
     role: str  # parent | school | admin
+    school_id: int | None = None
 
 
 class UserOut(BaseModel):
@@ -33,6 +50,7 @@ class UserOut(BaseModel):
     email: str
     full_name: str
     role: str
+    school_id: int | None = None
 
     class Config:
         from_attributes = True
@@ -44,10 +62,11 @@ class StudentCreate(BaseModel):
     full_name: str
     class_name: str
     parent_id: int | None = None
+    school_id: int | None = None
 
-    @field_validator('parent_id', mode='before')
+    @field_validator('parent_id', 'school_id', mode='before')
     @classmethod
-    def transform_parent_id(cls, v):
+    def transform_ids(cls, v):
         # Если фронтенд прислал пустую строку "" или строку "null", превращаем в None
         if v == "" or v == "null" or v is None:
             return None
@@ -66,6 +85,7 @@ class StudentOut(BaseModel):
     full_name: str
     class_name: str
     parent_id: int | None
+    school_id: int | None = None
     parent_email: str | None = None
     device: "DeviceOut | None" = None
 
@@ -104,6 +124,7 @@ class GeofenceCreate(BaseModel):
     # GeoJSON-like polygon coords: [[lon, lat], ...] — first and last must match
     coordinates: list[list[float]] = Field(..., min_length=4)
     student_id: int | None = None
+    school_id: int | None = None
 
 
 class GeofenceOut(BaseModel):
@@ -111,6 +132,7 @@ class GeofenceOut(BaseModel):
     name: str
     zone_type: str
     student_id: int | None
+    school_id: int | None
     coordinates: list[list[float]]
 
 

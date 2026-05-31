@@ -4,13 +4,13 @@ import codecs
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
 from ..models import Role, Student, User
 from ..schemas import DeviceOut, StudentCreate, StudentOut
-from ..security import get_current_user, require_roles
+from ..security import get_current_user, require_roles, hash_password
 
 
 router = APIRouter(prefix="/api/students", tags=["students"])
@@ -22,6 +22,7 @@ def _to_out(s: Student) -> StudentOut:
         id=s.id,
         full_name=s.full_name,
         class_name=s.class_name,
+        school_id=s.school_id,
         parent_id=s.parent_id,
         parent_email=parent_email,
         device=DeviceOut.model_validate(s.device) if s.device else None,
@@ -36,15 +37,21 @@ def list_students(
     q = select(Student).options(selectinload(Student.device), selectinload(Student.parent))
     if user.role == Role.PARENT.value:
         q = q.where(Student.parent_id == user.id)
+        
+    elif user.role == Role.SCHOOL.value:
+        if user.school_id is None:
+            return []
+        q = q.where(Student.school_id == user.school_id)
+        
+    
     students = db.execute(q).scalars().all()
     return [_to_out(s) for s in students]
-
 
 @router.post("", response_model=StudentOut, status_code=201)
 def create_student(
     payload: StudentCreate,
     db: Annotated[Session, Depends(get_db)],
-    _: Annotated[User, Depends(require_roles(Role.ADMIN.value, Role.SCHOOL.value))],
+    user: Annotated[User, Depends(require_roles(Role.ADMIN.value, Role.SCHOOL.value))],
 ):
     if payload.parent_id is not None:
         parent = db.get(User, payload.parent_id)
@@ -54,7 +61,12 @@ def create_student(
         full_name=payload.full_name,
         class_name=payload.class_name,
         parent_id=payload.parent_id,
+        school_id=user.school_id
     )
+
+    if user.role == Role.ADMIN.value and hasattr(payload, 'school_id'):
+        student.school_id = payload.school_id
+
     db.add(student)
     db.commit()
     db.refresh(student)
@@ -63,9 +75,18 @@ def create_student(
 @router.post("/import-csv", status_code=200)
 def import_students_csv(
     file: UploadFile = File(...),
+    school_id: int | None = None,
     db: Annotated[Session, Depends(get_db)] = None,
-    _: Annotated[User, Depends(require_roles(Role.ADMIN.value, Role.SCHOOL.value))] = None,
+    user: Annotated[User, Depends(require_roles(Role.ADMIN.value, Role.SCHOOL.value))] = None,
 ):
+    target_school_id = user.school_id if user.role == Role.SCHOOL.value else school_id
+
+    if not target_school_id:
+        raise HTTPException(
+            status_code=400, 
+            detail="Необходимо указать ID школы для импорта (выберите школу в списке)"
+        )
+    
     if not file.filename.endswith('.csv'):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, 
@@ -86,13 +107,17 @@ def import_students_csv(
         students_to_add = []
         errors = []
         row_idx = 1
+        temp_parents_cache = {}
+        
+        # Дефолтный пароль для автоматически создаваемых родителей
+        DEFAULT_PARENT_PASSWORD = hash_password("Mektep12345")
         
         for row in csv_reader:
             row_idx += 1
             
             full_name = row.get("full_name", "").strip()
             class_name = row.get("class_name", "").strip()
-            parent_email = row.get("parent_email", "").strip()
+            parent_email = row.get("parent_email", "").strip().lower()
             
             if not full_name or not class_name:
                 errors.append(f"Строка {row_idx}: Пропущено ФИО ученика или класс.")
@@ -100,27 +125,47 @@ def import_students_csv(
                 
             parent_id = None
             if parent_email:
-                parent_user = db.execute(
-                    select(User).where(User.email == parent_email)
-                ).scalar_one_or_none()
-                
-                if not parent_user:
-                    errors.append(f"Строка {row_idx}: Родитель с email '{parent_email}' не зарегистрирован в системе.")
-                    continue
-                if parent_user.role != Role.PARENT.value:
-                    errors.append(f"Строка {row_idx}: Пользователь '{parent_email}' найден, но он не является родителем.")
-                    continue
-                
-                parent_id = parent_user.id
+                if parent_email in temp_parents_cache:
+                    parent_id = temp_parents_cache[parent_email]
+                else:
+                    parent_user = db.execute(
+                        select(User).where(User.email == parent_email)
+                    ).scalar_one_or_none()
+                    
+                    if parent_user:
+                        if parent_user.role != Role.PARENT.value:
+                            errors.append(f"Строка {row_idx}: Email '{parent_email}' занят сотрудником.")
+                            continue
+                        parent_id = parent_user.id
+                        temp_parents_cache[parent_email] = parent_id
+                    else:
+                        try:
+                            new_parent = User(
+                                email=parent_email,
+                                password_hash=DEFAULT_PARENT_PASSWORD,
+                                full_name=f"Родитель ({full_name})",
+                                role=Role.PARENT.value,
+                                school_id=None
+                            )
+                            db.add(new_parent)
+                            db.flush()
+                            parent_id = new_parent.id
+                            temp_parents_cache[parent_email] = parent_id
+                        except Exception as e:
+                            db.rollback()
+                            errors.append(f"Строка {row_idx}: Ошибка БД при создании родителя.")
+                            continue
                 
             new_student = Student(
                 full_name=full_name,
                 class_name=class_name,
-                parent_id=parent_id
+                parent_id=parent_id,
+                school_id=target_school_id
             )
             students_to_add.append(new_student)
             
         if errors:
+            db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={"message": "Ошибки в заполнении CSV файла", "errors": errors}
@@ -156,7 +201,6 @@ def bulk_delete_students(
             detail="Список ID для удаления пуст"
         )
         
-    from sqlalchemy import delete
     statement = delete(Student).where(Student.id.in_(payload))
     result = db.execute(statement)
     db.commit()

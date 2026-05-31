@@ -25,17 +25,27 @@ def list_users(
 def create_user(
     payload: UserCreate,
     db: Annotated[Session, Depends(get_db)],
-    _: Annotated[User, Depends(require_roles(Role.ADMIN.value))],
+    current_user: Annotated[User, Depends(require_roles(Role.ADMIN.value))],
 ):
     if payload.role not in {r.value for r in Role}:
         raise HTTPException(status_code=400, detail="Недопустимая роль")
     if db.execute(select(User).where(User.email == payload.email)).scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Пользователь с таким email уже существует")
+    if payload.role == Role.SCHOOL.value:
+        if not payload.school_id:
+            raise HTTPException(
+                status_code=400, 
+                detail="Для пользователя с ролью 'school' необходимо указать school_id"
+            )
+        from ..models import School
+        if not db.get(School, payload.school_id):
+            raise HTTPException(status_code=400, detail="Указанный school_id не существует")
     user = User(
         email=payload.email,
         password_hash=hash_password(payload.password),
         full_name=payload.full_name,
         role=payload.role,
+        school_id=payload.school_id if payload.role == Role.SCHOOL.value else None
     )
     db.add(user)
     db.commit()

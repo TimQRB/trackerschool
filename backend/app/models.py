@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date as py_date, datetime, timezone
 from enum import Enum
 
 from geoalchemy2 import Geometry
@@ -70,7 +70,9 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(32))
     fcm_token: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
+    school_id: Mapped[int | None] = mapped_column(ForeignKey("schools.id"), nullable=True)
+    
+    school: Mapped["School | None"] = relationship(back_populates="users")
     students: Mapped[list["Student"]] = relationship(back_populates="parent")
 
 
@@ -81,10 +83,23 @@ class Student(Base):
     full_name: Mapped[str] = mapped_column(String(255))
     class_name: Mapped[str] = mapped_column(String(64))
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    school_id: Mapped[int | None] = mapped_column(ForeignKey("schools.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
+    
+    school: Mapped["School | None"] = relationship(back_populates="students")
     parent: Mapped["User | None"] = relationship(back_populates="students")
     device: Mapped["Device | None"] = relationship(back_populates="student", uselist=False)
+
+class School(Base):
+    __tablename__ = "schools"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True)
+    address: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    users: Mapped[list["User"]] = relationship(back_populates="school")
+    students: Mapped[list["Student"]] = relationship(back_populates="school")
 
 
 class Device(Base):
@@ -112,7 +127,10 @@ class Geofence(Base):
     zone_type: Mapped[str] = mapped_column(String(32))
     polygon = mapped_column(Geometry("POLYGON", srid=4326))
     student_id: Mapped[int | None] = mapped_column(ForeignKey("students.id"), nullable=True)
+    school_id: Mapped[int | None] = mapped_column(ForeignKey("schools.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    school: Mapped["School | None"] = relationship()
 
 
 class LocationPoint(Base):
@@ -185,7 +203,7 @@ class AttendanceLog(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     student_id: Mapped[int] = mapped_column(ForeignKey("students.id"), index=True)
-    date: Mapped[date] = mapped_column(Date, index=True)
+    date: Mapped[py_date] = mapped_column(Date, index=True)
     enter_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     exit_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="present")

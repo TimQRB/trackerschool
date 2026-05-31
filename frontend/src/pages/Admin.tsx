@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MapContainer, TileLayer, Polygon, Marker, useMapEvents } from "react-leaflet";
 import { Link } from "react-router-dom";
-import { api, atApi, Contact, Device, Geofence, Student, User } from "../api";
+import { api, atApi, Contact, Device, Geofence, School, Student, User } from "../api";
 import { WS_URL } from "../api";
 import L from "leaflet";
 import icon from "leaflet/dist/images/marker-icon.png";
@@ -19,7 +19,7 @@ interface Props {
   onLogout: () => void;
 }
 
-type Tab = "students" | "devices" | "geofences" | "contacts" | "users" | "at";
+type Tab = "students" | "devices" | "geofences" | "contacts" | "users" | "at" | "schools";
 
 export default function Admin({ user, onLogout }: Props) {
   const [tab, setTab] = useState<Tab>("students");
@@ -40,6 +40,11 @@ export default function Admin({ user, onLogout }: Props) {
           <button className={tab === "students" ? "active" : ""} onClick={() => setTab("students")}>
             Ученики
           </button>
+          {user.role === "admin" && (
+            <button className={tab === "schools" ? "active" : ""} onClick={() => setTab("schools")}>
+              Школы
+            </button>
+          )}
           <button className={tab === "devices" ? "active" : ""} onClick={() => setTab("devices")}>
             Устройства
           </button>
@@ -60,24 +65,29 @@ export default function Admin({ user, onLogout }: Props) {
         </div>
 
         <div style={{ marginTop: 16, background: "white", padding: 20, borderRadius: 8 }}>
-          {tab === "students" && <StudentsTab />}
+          {tab === "students" && <StudentsTab user={user} />}
           {tab === "devices" && <DevicesTab isAdmin={user.role === "admin"} />}
-          {tab === "geofences" && <GeofencesTab />}
+          {tab === "geofences" && <GeofencesTab user={user} />}
           {tab === "contacts" && <ContactsTab />}
           {tab === "at" && <AtTerminalTab />}
           {tab === "users" && <UsersTab />}
+          {tab === "schools" && <SchoolsTab />}
         </div>
       </div>
     </div>
   );
 }
 
-export function StudentsTab() {
+export function StudentsTab({ user }: { user: User }) {
   const [items, setItems] = useState<Student[]>([]);
   const [name, setName] = useState("");
   const [cls, setCls] = useState("");
   const [parentId, setParentId] = useState<string>("");
   const [parents, setParents] = useState<User[]>([]);
+  const [schoolId, setSchoolId] = useState<string>("");
+  const [schools, setSchools] = useState<School[]>([]);
+  const [importSchoolId, setImportSchoolId] = useState<string>("");
+
   
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -93,18 +103,35 @@ export function StudentsTab() {
 
   async function load() {
     try {
-      const students = await api.listStudents();
-      setItems(students);
-      const users = await api.listUsers();
-      setParents(users.filter((u) => u.role === "parent"));
+      const studs = await api.listStudents();
+      setItems(studs);
+      
+      const allSchools = await api.listSchools();
+      setSchools(allSchools);
+
+      const allUsers = await api.listUsers();
+      if (user.role === "school") {
+        const schoolParents = allUsers.filter(u => 
+          u.role === "parent" && 
+          studs.some(s => s.parent_id === u.id && s.school_id === user.school_id)
+        );
+        setParents(schoolParents);
+      } else {
+        setParents(allUsers.filter(u => u.role === "parent"));
+      }
     } catch (err) {
-      console.error("Ошибка при загрузке данных:", err);
+      console.error(err);
     }
   }
 
   useEffect(() => {
+    if (user.role === "school" && user.school_id) {
+      const idStr = String(user.school_id);
+      setSchoolId(idStr);
+      setImportSchoolId(idStr);
+    }
     load();
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -169,10 +196,12 @@ export function StudentsTab() {
         full_name: name.trim(),
         class_name: cls.trim(),
         parent_id: parentId ? Number(parentId) : null,
+        school_id: schoolId ? Number(schoolId) : null,
       });
       setName(""); 
       setCls(""); 
       setParentId("");
+      setSchoolId("");
       await load();
     } catch (err) {
       alert(`Ошибка при создании ученика: ${err instanceof Error ? err.message : String(err)}`);
@@ -185,9 +214,15 @@ export function StudentsTab() {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (!importSchoolId) {
+      alert("Пожалуйста, выберите школу перед импортом CSV файла!");
+      e.target.value = "";
+      return;
+    }
+
     setUploading(true);
     try {
-      const res = await api.importStudentsCSV(file);
+      const res = await api.importStudentsCSV(file, importSchoolId);
       alert(res.message || "Импорт успешно завершен!");
       await load();
     } catch (err) {
@@ -199,7 +234,13 @@ export function StudentsTab() {
   }
 
   function downloadCsvTemplate() {
-    const csvContent = "\uFEFFfull_name,class_name,parent_email\nИванов Иван Иванович,5А,parent@safemektep.kz\nПетров Петр Петрович,11Б,";
+    const headers = "full_name,class_name,parent_email";
+    const rows = [
+      "Иванов Алексей Петрович,5А,parent@safemektep.kz",
+      "Петрова Мария Сергеевна,3Б,parent@safemektep.kz"
+    ];
+    
+    const csvContent = "\uFEFF" + headers + "\n" + rows.join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -238,22 +279,30 @@ export function StudentsTab() {
           >
             📋 Шаблон CSV
           </button>
-
-          <label 
-            style={{ 
-              padding: "8px 14px", 
-              background: "#1e3a8a", 
-              color: "white", 
-              borderRadius: 8, 
-              cursor: uploading ? "not-allowed" : "pointer",
-              fontSize: 13,
-              fontWeight: 600,
-              opacity: uploading ? 0.7 : 1
-            }}
-          >
-            {uploading ? "⏳ Загрузка..." : "📥 Импорт из CSV"}
-            <input type="file" accept=".csv" onChange={handleCsvUpload} disabled={uploading} style={{ display: "none" }} />
-          </label>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            {user.role === "admin" && (
+              <select
+                value={importSchoolId}
+                onChange={(e) => setImportSchoolId(e.target.value)}
+                style={{ padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 13, background: "white", fontWeight: 600 }}
+              >
+                <option value="">— Выберите школу для импорта —</option>
+                {schools.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            )}
+            <label style={{ 
+                padding: "8px 14px", 
+                background: !importSchoolId ? "#94a3b8" : "#1e3a8a", 
+                color: "white", borderRadius: 8, 
+                cursor: uploading || !importSchoolId ? "not-allowed" : "pointer",
+                fontSize: 13, fontWeight: 600 
+            }}>
+              {uploading ? "⏳ Загрузка..." : "📥 Импорт из CSV"}
+              <input type="file" accept=".csv" onChange={handleCsvUpload} disabled={uploading || !importSchoolId} style={{ display: "none" }} />
+            </label>
+          </div>
         </div>
       </div>
 
@@ -311,6 +360,7 @@ export function StudentsTab() {
               <th style={{ padding: "14px 16px", fontWeight: 600, color: "#475569" }}>Класс</th>
               <th style={{ padding: "14px 16px", fontWeight: 600, color: "#475569" }}>Устройство</th>
               <th style={{ padding: "14px 16px", fontWeight: 600, color: "#475569" }}>Родитель (Email)</th>
+              <th style={{ padding: "14px 16px", fontWeight: 600, color: "#475569" }}>Школа</th>
             </tr>
           </thead>
           <tbody>
@@ -342,6 +392,9 @@ export function StudentsTab() {
                   </td>
                   <td style={{ padding: "14px 16px", color: "#334155" }}>
                     {s.parent_email ? ` ${s.parent_email}` : s.parent_id ? `ID: ${s.parent_id}` : <span style={{ color: "#cbd5e1", fontStyle: "italic" }}>не указан</span>}
+                  </td>
+                  <td style={{ padding: "14px 16px", color: "#334155" }}>
+                    {s.school_id ? (schools.find((sch) => sch.id === s.school_id)?.name || `ID: ${s.school_id}`) : <span style={{ color: "#cbd5e1", fontStyle: "italic" }}>не указана</span>}
                   </td>
                 </tr>
               ))
@@ -400,6 +453,21 @@ export function StudentsTab() {
               <input type="text" placeholder="11Б" value={cls} onChange={(e) => setCls(e.target.value)} required style={{ padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: 8 }} />
             </div>
           </div>
+          {user.role === "admin" && (
+            <div style={{ marginBottom: "14px" }}>
+              <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Школа (Привязка)</label>
+              <select 
+                value={schoolId} 
+                onChange={(e) => setSchoolId(e.target.value)}
+                style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", background: "white" }}
+              >
+                <option value="">— Не выбрана (Общая) —</option>
+                {schools.map((school) => (
+                  <option key={school.id} value={school.id}>{school.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 16 }}>
             <label style={{ fontSize: 12, color: "#64748b" }}>Родитель</label>
             <select value={parentId} onChange={(e) => setParentId(e.target.value)} style={{ padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: 8, background: "white" }}>
@@ -415,6 +483,96 @@ export function StudentsTab() {
         </form>
       </div>
 
+    </div>
+  );
+}
+
+export function SchoolsTab() {
+  const [items, setItems] = useState<School[]>([]);
+  const [name, setName] = useState("");
+  const [address, setAddress] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function load() {
+    try {
+      const data = await api.listSchools();
+      setItems(data);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setLoading(true);
+    try {
+      await api.createSchool({ name, address });
+      setName(""); setAddress("");
+      load();
+    } catch (err) {
+      alert("Ошибка при создании школы");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function remove(id: number) {
+    if (!confirm("Удалить школу? Это может затронуть привязанных учеников!")) return;
+    try {
+      await api.deleteSchool(id);
+      load();
+    } catch (err) {
+      alert("Не удалось удалить школу");
+    }
+  }
+
+  return (
+    <div style={{ padding: "20px" }}>
+      <h3 style={{ marginBottom: "20px" }}>Управление школами</h3>
+      
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 350px", gap: "24px" }}>
+        <div style={{ background: "white", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ background: "#f8fafc", borderBottom: "2px solid #e2e8f0", textAlign: "left" }}>
+                <th style={{ padding: "12px 16px" }}>ID</th>
+                <th style={{ padding: "12px 16px" }}>Название</th>
+                <th style={{ padding: "12px 16px" }}>Адрес</th>
+                <th style={{ padding: "12px 16px" }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map(s => (
+                <tr key={s.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                  <td style={{ padding: "12px 16px", color: "#64748b" }}>{s.id}</td>
+                  <td style={{ padding: "12px 16px", fontWeight: 600 }}>{s.name}</td>
+                  <td style={{ padding: "12px 16px" }}>{s.address || "—"}</td>
+                  <td style={{ padding: "12px 16px", textAlign: "right" }}>
+                    <button onClick={() => remove(s.id)} style={{ color: "#ef4444", border: "none", background: "none", cursor: "pointer" }}>Удалить</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <form onSubmit={submit} style={{ background: "white", padding: "20px", borderRadius: "12px", border: "1px solid #e2e8f0", height: "fit-content" }}>
+          <h4 style={{ marginTop: 0 }}>Добавить школу</h4>
+          <div style={{ marginBottom: "12px" }}>
+            <label style={{ display: "block", fontSize: "13px", marginBottom: "4px" }}>Название</label>
+            <input value={name} onChange={e => setName(e.target.value)} required style={{ width: "100%", padding: "8px", borderRadius: "6px", border: "1px solid #cbd5e1" }} />
+          </div>
+          <div style={{ marginBottom: "16px" }}>
+            <label style={{ display: "block", fontSize: "13px", marginBottom: "4px" }}>Адрес</label>
+            <input value={address} onChange={e => setAddress(e.target.value)} style={{ width: "100%", padding: "8px", borderRadius: "6px", border: "1px solid #cbd5e1" }} />
+          </div>
+          <button type="submit" disabled={loading} style={{ width: "100%", padding: "10px", background: "#2563eb", color: "white", border: "none", borderRadius: "6px", fontWeight: 600 }}>
+            {loading ? "Сохранение..." : "Создать школу"}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
@@ -492,7 +650,7 @@ function DevicesTab({ isAdmin }: { isAdmin: boolean }) {
   );
 }
 
-function GeofencesTab() {
+function GeofencesTab({ user }: { user: User }){
   const [items, setItems] = useState<Geofence[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [name, setName] = useState("");
@@ -500,11 +658,14 @@ function GeofencesTab() {
   const [studentId, setStudentId] = useState<string>("");
   const [coords, setCoords] = useState("");
   const [drawnPoints, setDrawnPoints] = useState<[number, number][]>([]);
+  const [targetSchoolId, setSchoolId] = useState<string>("");
+  const [schools, setSchools] = useState<School[]>([]);
 
   async function load() {
     try {
       setItems(await api.listGeofences());
       setStudents(await api.listStudents());
+      setSchools(await api.listSchools());
     } catch (err) {
       console.error("Ошибка загрузки данных:", err);
     }
@@ -538,9 +699,11 @@ function GeofencesTab() {
         zone_type: zoneType,
         coordinates: formattedCoordinates,
         student_id: studentId ? Number(studentId) : null,
+        school_id: targetSchoolId ? Number(targetSchoolId) : null,
       });
       setName("");
       setStudentId("");
+      setSchoolId("");
       setDrawnPoints([]);
       load();
       alert("Геозона успешно создана!");
@@ -600,7 +763,7 @@ function GeofencesTab() {
                     })()
                   ) : (
                     <span style={{ color: "#2563eb", fontWeight: 500 }}>
-                      🌍 Общая зона (для всей школы)
+                      🌍 Общая зона: {schools.find(s => s.id === g.school_id)?.name || `Школа (ID: ${g.school_id})`}
                     </span>
                   )}
                 </td>
@@ -707,16 +870,41 @@ function GeofencesTab() {
             </select>
           </div>
 
+          {user.role === "admin" && (
+            <div style={{ marginBottom: "14px" }}>
+              <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>
+                Привязать к школе
+              </label>
+              <select 
+                value={targetSchoolId} 
+                onChange={(e) => setSchoolId(e.target.value)}
+                required={!studentId}
+                style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", background: "white" }}
+              >
+                <option value="">— Выберите школу —</option>
+                {schools.map((s) => (
+                  <option key={s.id} value={s.id.toString()}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div style={{ marginBottom: "20px" }}>
-            <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Ученик (область видимости)</label>
+            <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>
+              Ученик (если зона личная)
+            </label>
             <select 
               value={studentId} 
               onChange={(e) => setStudentId(e.target.value)}
               style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", background: "white" }}
             >
-              <option value="">— Общая зона школы —</option>
+              <option value="">— Общая зона школы (все ученики) —</option>
               {students.map((s) => (
-                <option key={s.id} value={s.id}>{s.full_name} ({s.class_name})</option>
+                <option key={s.id} value={s.id.toString()}>
+                  {s.full_name} ({s.class_name})
+                </option>
               ))}
             </select>
           </div>
@@ -1521,21 +1709,39 @@ function AtTerminalTab() {
 
 function UsersTab() {
   const [items, setItems] = useState<User[]>([]);
+  const [schools, setSchools] = useState<School[]>([]);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [role, setRole] = useState("parent");
+  const [selectedSchoolId, setSelectedSchoolId] = useState<string>("");
 
   async function load() {
-    setItems(await api.listUsers());
+    const [u, s] = await Promise.all([
+      api.listUsers(),
+      api.listSchools()
+    ]);
+    setItems(u);
+    setSchools(s);
   }
   useEffect(() => { load(); }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    await api.createUser({ email, password, full_name: fullName, role });
-    setEmail(""); setPassword(""); setFullName(""); setRole("parent");
-    load();
+    try {
+      await api.createUser({ 
+        email, 
+        password, 
+        full_name: fullName, 
+        role,
+        school_id: role === "school" ? Number(selectedSchoolId) : null 
+      });
+      setEmail(""); setPassword(""); setFullName(""); setRole("parent"); setSelectedSchoolId("");
+      load();
+      alert("Пользователь создан");
+    } catch (err: any) {
+      alert("Ошибка: " + err.message);
+    }
   }
 
   return (
@@ -1562,29 +1768,47 @@ function UsersTab() {
         </tbody>
       </table>
 
-      <form onSubmit={submit} style={{ maxWidth: 400 }}>
+      <form onSubmit={submit} style={{ maxWidth: 400, background: "#f8fafc", padding: 20, borderRadius: 12, border: "1px solid #e2e8f0" }}>
         <h4>Добавить пользователя</h4>
-        <div className="form-row">
-          <label>Email</label>
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+        <div className="form-row" style={{ marginBottom: 10 }}>
+          <label style={{ display: "block", fontSize: 13, fontWeight: 600 }}>Email</label>
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #cbd5e1" }} />
         </div>
-        <div className="form-row">
-          <label>Пароль</label>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+        <div className="form-row" style={{ marginBottom: 10 }}>
+          <label style={{ display: "block", fontSize: 13, fontWeight: 600 }}>Пароль</label>
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #cbd5e1" }} />
         </div>
-        <div className="form-row">
-          <label>ФИО</label>
-          <input value={fullName} onChange={(e) => setFullName(e.target.value)} required />
+        <div className="form-row" style={{ marginBottom: 10 }}>
+          <label style={{ display: "block", fontSize: 13, fontWeight: 600 }}>ФИО</label>
+          <input value={fullName} onChange={(e) => setFullName(e.target.value)} required style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #cbd5e1" }} />
         </div>
-        <div className="form-row">
-          <label>Роль</label>
-          <select value={role} onChange={(e) => setRole(e.target.value)}>
+        <div className="form-row" style={{ marginBottom: 10 }}>
+          <label style={{ display: "block", fontSize: 13, fontWeight: 600 }}>Роль</label>
+          <select value={role} onChange={(e) => setRole(e.target.value)} style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #cbd5e1" }}>
             <option value="parent">Родитель</option>
-            <option value="school">Школа</option>
-            <option value="admin">Администратор</option>
+            <option value="school">Школьный администратор</option>
+            <option value="admin">Системный администратор</option>
           </select>
         </div>
-        <button className="btn-primary" type="submit">Создать</button>
+        {role === "school" && (
+          <div className="form-row">
+            <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#2563eb" }}>Привязать к организации (Школе)</label>
+            <select 
+              value={selectedSchoolId} 
+              onChange={(e) => setSelectedSchoolId(e.target.value)}
+              required
+              style={{ width: "100%", padding: 8, borderRadius: 6, border: "2px solid #3b82f6" }}
+            >
+              <option value="">— Выберите школу из списка —</option>
+              {schools.map(s => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        <button className="btn-primary" type="submit">
+          Создать аккаунт
+        </button>
       </form>
     </div>
   );
