@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
@@ -34,7 +34,11 @@ class SchoolOut(BaseModel):
 
     class Config:
         from_attributes = True
-
+        
+class SchoolUpdate(BaseModel):
+    name: Optional[str] = None
+    address: Optional[str] = None
+    
 # --- Users ---
 
 class UserCreate(BaseModel):
@@ -54,6 +58,13 @@ class UserOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+class UserUpdate(BaseModel):
+    email: Optional[EmailStr] = None
+    full_name: Optional[str] = None
+    role: Optional[str] = None
+    school_id: Optional[int] = None
+    password: Optional[str] = None # Позволим менять пароль
 
 
 # --- Students ---
@@ -92,6 +103,11 @@ class StudentOut(BaseModel):
     class Config:
         from_attributes = True
 
+class StudentUpdate(BaseModel):
+    full_name: Optional[str] = None
+    class_name: Optional[str] = None
+    parent_id: Optional[int] = None
+    school_id: Optional[int] = None
 
 # --- Devices ---
 

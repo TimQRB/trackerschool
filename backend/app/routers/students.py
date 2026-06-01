@@ -3,13 +3,13 @@ import codecs
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status, Body
 from sqlalchemy import select, delete
 from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
 from ..models import Role, Student, User
-from ..schemas import DeviceOut, StudentCreate, StudentOut
+from ..schemas import DeviceOut, StudentCreate, StudentOut, StudentUpdate
 from ..security import get_current_user, require_roles, hash_password
 
 
@@ -190,7 +190,29 @@ def import_students_csv(
             detail=f"Критическая ошибка при чтении CSV: {str(e)}"
         )
 
-@router.delete("/bulk-delete", status_code=status.HTTP_200_OK)
+@router.patch("/{student_id}", response_model=StudentOut)
+def patch_student(
+    student_id: int,
+    payload: StudentUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(require_roles(Role.ADMIN.value, Role.SCHOOL.value))],
+):
+    student = db.get(Student, student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="Ученик не найден")
+
+    if user.role == Role.SCHOOL.value and student.school_id != user.school_id:
+        raise HTTPException(status_code=403, detail="Нет доступа к этому ученику")
+
+    update_data = payload.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(student, key, value)
+
+    db.commit()
+    db.refresh(student)
+    return _to_out(student)
+
+@router.post("/bulk-delete", status_code=status.HTTP_200_OK)
 def bulk_delete_students(
     payload: list[int],
     db: Annotated[Session, Depends(get_db)],

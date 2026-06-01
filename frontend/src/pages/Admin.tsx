@@ -486,6 +486,32 @@ export function SchoolsTab() {
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
   const [loading, setLoading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editAddress, setEditAddress] = useState("");
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  
+  const startEdit = (s: School) => {
+    setEditingId(s.id);
+    setEditName(s.name);
+    setEditAddress(s.address || "");
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+  };
+
+  async function saveEdit(id: number) {
+    try {
+      await api.patchSchool(id, { name: editName, address: editAddress });
+      setEditingId(null);
+      load();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  }
 
   async function load() {
     try {
@@ -504,8 +530,10 @@ export function SchoolsTab() {
     setLoading(true);
     try {
       await api.createSchool({ name, address });
-      setName(""); setAddress("");
-      load();
+      setName("");
+      setAddress("");
+      await load();
+      alert("Школа успешно создана");
     } catch (err: any) {
       alert(err.message || "Ошибка при создании школы");
     } finally {
@@ -514,45 +542,138 @@ export function SchoolsTab() {
   }
 
   async function remove(id: number) {
-    if (!confirm("Удалить школу? Это может затронуть привязанных учеников!")) return;
+    if (!window.confirm("Вы уверены, что хотите удалить эту школу?")) return;
     try {
       await api.deleteSchool(id);
+      setSelectedIds(prev => prev.filter(x => x !== id));
       load();
     } catch (err: any) {
-      alert(err.message || "Не удалось удалить школу");
-      console.error("Delete school error:", err);
+      alert("Ошибка удаления: " + err.message);
     }
   }
 
+  async function handleBulkDelete() {
+    if (!window.confirm(`Вы уверены, что хотите удалить выбранные школы (${selectedIds.length})?`)) return;
+    setDeleting(true);
+    try {
+      const res = await api.bulkDeleteSchools(selectedIds);
+      alert(res.message || "Успешно удалено");
+      setSelectedIds([]);
+      load();
+    } catch (err: any) {
+      alert("Ошибка массового удаления: " + err.message);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  const isAllOnPageSelected = items.length > 0 && items.every(s => selectedIds.includes(s.id));
+  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.checked) {
+      setSelectedIds(items.map(s => s.id));
+    } else {
+      setSelectedIds([]);
+    }
+  };
+  const handleSelectOne = (id: number, checked: boolean) => {
+    if (checked) {
+      setSelectedIds(prev => [...prev, id]);
+    } else {
+      setSelectedIds(prev => prev.filter(x => x !== id));
+    }
+  };
+
   return (
     <div style={{ padding: "20px" }}>
-      <h3 style={{ marginBottom: "20px" }}>Управление школами</h3>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+        <h3 style={{ margin: 0 }}>Управление школами</h3>
+        {selectedIds.length > 0 && (
+          <button
+            type="button"
+            onClick={handleBulkDelete}
+            disabled={deleting}
+            style={{
+              padding: "8px 14px",
+              background: "#dc2626",
+              color: "white",
+              border: "none",
+              borderRadius: 8,
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: deleting ? "not-allowed" : "pointer",
+              opacity: deleting ? 0.6 : 1,
+            }}
+          >
+            🗑️ Удалить выбранные школы ({selectedIds.length})
+          </button>
+        )}
+      </div>
       
       <div style={{ display: "grid", gridTemplateColumns: "1fr 350px", gap: "24px" }}>
         <div style={{ background: "white", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ background: "#f8fafc", borderBottom: "2px solid #e2e8f0", textAlign: "left" }}>
+                <th style={{ padding: "12px 16px", width: 40 }}>
+                  <input type="checkbox" checked={isAllOnPageSelected} onChange={handleSelectAll} style={{ cursor: "pointer" }} />
+                </th>
                 <th style={{ padding: "12px 16px" }}>ID</th>
                 <th style={{ padding: "12px 16px" }}>Название</th>
                 <th style={{ padding: "12px 16px" }}>Адрес</th>
-                <th style={{ padding: "12px 16px" }}></th>
+                <th style={{ padding: "12px 16px", textAlign: "right" }}>Действия</th>
               </tr>
             </thead>
             <tbody>
-              {items.map(s => (
-                <tr key={s.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                  <td style={{ padding: "12px 16px", color: "#64748b" }}>{s.id}</td>
-                  <td style={{ padding: "12px 16px", fontWeight: 600 }}>{s.name}</td>
-                  <td style={{ padding: "12px 16px" }}>{s.address || "—"}</td>
-                  <td style={{ padding: "12px 16px", textAlign: "right" }}>
-                    <button onClick={() => remove(s.id)} style={{ color: "#ef4444", border: "none", background: "none", cursor: "pointer" }}>Удалить</button>
-                  </td>
+              {items.length === 0 ? (
+                <tr>
+                  <td colSpan={5} style={{ padding: "32px", textAlign: "center", color: "#94a3b8" }}>Школы не найдены.</td>
                 </tr>
-              ))}
+              ) : (
+                items.map(s => (
+                  <tr key={s.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                    <td style={{ padding: "12px 16px" }}>
+                      <input 
+                        type="checkbox" 
+                        checked={selectedIds.includes(s.id)} 
+                        onChange={(e) => handleSelectOne(s.id, e.target.checked)} 
+                        style={{ cursor: "pointer" }}
+                      />
+                    </td>
+                    <td style={{ padding: "12px 16px", color: "#64748b" }}>{s.id}</td>
+                    <td style={{ padding: "12px 16px", fontWeight: 600 }}>
+                      {editingId === s.id ? (
+                        <input value={editName} onChange={e => setEditName(e.target.value)} style={{ padding: "4px 8px", borderRadius: "4px", border: "1px solid #cbd5e1", width: "90%" }} />
+                      ) : (
+                        s.name
+                      )}
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      {editingId === s.id ? (
+                        <input value={editAddress} onChange={e => setEditAddress(e.target.value)} style={{ padding: "4px 8px", borderRadius: "4px", border: "1px solid #cbd5e1", width: "90%" }} />
+                      ) : (
+                        s.address || "—"
+                      )}
+                    </td>
+                    <td style={{ padding: "12px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
+                      {editingId === s.id ? (
+                        <>
+                          <button onClick={() => saveEdit(s.id)} style={{ color: "#16a34a", border: "none", background: "none", cursor: "pointer", marginRight: "12px", fontWeight: 600 }}>Сохранить</button>
+                          <button onClick={cancelEdit} style={{ color: "#64748b", border: "none", background: "none", cursor: "pointer" }}>Отмена</button>
+                        </>
+                      ) : (
+                        <>
+                          <button onClick={() => startEdit(s)} style={{ color: "#2563eb", border: "none", background: "none", cursor: "pointer", marginRight: "12px" }}>Редактировать</button>
+                          <button onClick={() => remove(s.id)} style={{ color: "#ef4444", border: "none", background: "none", cursor: "pointer" }}>Удалить</button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
+
         <form onSubmit={submit} style={{ background: "white", padding: "20px", borderRadius: "12px", border: "1px solid #e2e8f0", height: "fit-content" }}>
           <h4 style={{ marginTop: 0 }}>Добавить школу</h4>
           <div style={{ marginBottom: "12px" }}>
@@ -1705,19 +1826,27 @@ function AtTerminalTab() {
 function UsersTab() {
   const [items, setItems] = useState<User[]>([]);
   const [schools, setSchools] = useState<School[]>([]);
+  const [deleting, setDeleting] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [role, setRole] = useState("parent");
   const [selectedSchoolId, setSelectedSchoolId] = useState<string>("");
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editEmail, setEditEmail] = useState("");
+  const [editFullName, setEditFullName] = useState("");
+  const [editRole, setEditRole] = useState("");
+  const [editSchoolId, setEditSchoolId] = useState<string>("");
 
   async function load() {
-    const [u, s] = await Promise.all([
-      api.listUsers(),
-      api.listSchools()
-    ]);
-    setItems(u);
-    setSchools(s);
+    try {
+      const [u, s] = await Promise.all([api.listUsers(), api.listSchools()]);
+      setItems(u);
+      setSchools(s);
+    } catch (err: any) {
+      alert("Ошибка при загрузке: " + err.message);
+    }
   }
   useEffect(() => { load(); }, []);
 
@@ -1739,72 +1868,210 @@ function UsersTab() {
     }
   }
 
-  return (
-    <div>
-      <h3>Пользователи</h3>
-      <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 20 }}>
-        <thead>
-          <tr style={{ background: "#f1f5f9", textAlign: "left" }}>
-            <th style={{ padding: 8 }}>ID</th>
-            <th style={{ padding: 8 }}>Email</th>
-            <th style={{ padding: 8 }}>ФИО</th>
-            <th style={{ padding: 8 }}>Роль</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((u) => (
-            <tr key={u.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
-              <td style={{ padding: 8 }}>{u.id}</td>
-              <td style={{ padding: 8 }}>{u.email}</td>
-              <td style={{ padding: 8 }}>{u.full_name}</td>
-              <td style={{ padding: 8 }}>{u.role}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+  async function remove(id: number) {
+    if (!window.confirm("Удалить этого пользователя?")) return;
+    try {
+      await api.deleteUser(id);
+      setSelectedIds(prev => prev.filter(x => x !== id));
+      load();
+    } catch (err: any) {
+      alert("Ошибка при удалении: " + err.message);
+    }
+  }
 
-      <form onSubmit={submit} style={{ maxWidth: 400, background: "#f8fafc", padding: 20, borderRadius: 12, border: "1px solid #e2e8f0" }}>
-        <h4>Добавить пользователя</h4>
-        <div className="form-row" style={{ marginBottom: 10 }}>
-          <label style={{ display: "block", fontSize: 13, fontWeight: 600 }}>Email</label>
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #cbd5e1" }} />
-        </div>
-        <div className="form-row" style={{ marginBottom: 10 }}>
-          <label style={{ display: "block", fontSize: 13, fontWeight: 600 }}>Пароль</label>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #cbd5e1" }} />
-        </div>
-        <div className="form-row" style={{ marginBottom: 10 }}>
-          <label style={{ display: "block", fontSize: 13, fontWeight: 600 }}>ФИО</label>
-          <input value={fullName} onChange={(e) => setFullName(e.target.value)} required style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #cbd5e1" }} />
-        </div>
-        <div className="form-row" style={{ marginBottom: 10 }}>
-          <label style={{ display: "block", fontSize: 13, fontWeight: 600 }}>Роль</label>
-          <select value={role} onChange={(e) => setRole(e.target.value)} style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #cbd5e1" }}>
-            <option value="parent">Родитель</option>
-            <option value="school">Школьный администратор</option>
-            <option value="admin">Системный администратор</option>
-          </select>
-        </div>
-        {role === "school" && (
-          <div className="form-row">
-            <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#2563eb" }}>Привязать к организации (Школе)</label>
-            <select 
-              value={selectedSchoolId} 
-              onChange={(e) => setSelectedSchoolId(e.target.value)}
-              required
-              style={{ width: "100%", padding: 8, borderRadius: 6, border: "2px solid #3b82f6" }}
-            >
-              <option value="">— Выберите школу из списка —</option>
-              {schools.map(s => (
-                <option key={s.id} value={s.id}>{s.name}</option>
+  async function handleBulkDelete() {
+    if (!window.confirm(`Вы уверены, что хотите удалить выбранных пользователей (${selectedIds.length})?`)) return;
+    setDeleting(true);
+    try {
+      const res = await api.bulkDeleteUsers(selectedIds);
+      alert(res.message || "Пользователи успешно удалены");
+      setSelectedIds([]);
+      load();
+    } catch (err: any) {
+      alert("Ошибка массового удаления: " + err.message);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  const startEdit = (u: User) => {
+    setEditingId(u.id);
+    setEditEmail(u.email);
+    setEditFullName(u.full_name);
+    setEditRole(u.role);
+    setEditSchoolId(u.school_id ? String(u.school_id) : "");
+  };
+
+  const saveEdit = async (id: number) => {
+    try {
+      await api.patchUser(id, {
+        email: editEmail,
+        full_name: editFullName,
+        role: editRole,
+        school_id: editRole === "school" && editSchoolId ? Number(editSchoolId) : null
+      });
+      setEditingId(null);
+      load();
+    } catch (err: any) {
+      alert("Ошибка сохранения: " + err.message);
+    }
+  };
+
+  const isAllOnPageSelected = items.length > 0 && items.every(u => selectedIds.includes(u.id));
+  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.checked) {
+      setSelectedIds(items.map(u => u.id));
+    } else {
+      setSelectedIds([]);
+    }
+  };
+  const handleSelectOne = (id: number, checked: boolean) => {
+    if (checked) {
+      setSelectedIds(prev => [...prev, id]);
+    } else {
+      setSelectedIds(prev => prev.filter(x => x !== id));
+    }
+  };
+
+  return (
+    <div style={{ padding: "20px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <h3 style={{ margin: 0 }}>Пользователи</h3>
+        {selectedIds.length > 0 && (
+          <button
+            type="button"
+            onClick={handleBulkDelete}
+            disabled={deleting}
+            style={{
+              padding: "8px 14px",
+              background: "#dc2626",
+              color: "white",
+              border: "none",
+              borderRadius: 8,
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: deleting ? "not-allowed" : "pointer",
+              opacity: deleting ? 0.6 : 1
+            }}
+          >
+            🗑️ Удалить выбранных пользователей ({selectedIds.length})
+          </button>
+        )}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 400px", gap: "24px" }}>
+        <div style={{ background: "white", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ background: "#f1f5f9", textAlign: "left", borderBottom: "2px solid #e2e8f0" }}>
+                <th style={{ padding: 12, width: 40 }}>
+                  <input type="checkbox" checked={isAllOnPageSelected} onChange={handleSelectAll} style={{ cursor: "pointer" }} />
+                </th>
+                <th style={{ padding: 12 }}>ID</th>
+                <th style={{ padding: 12 }}>Email</th>
+                <th style={{ padding: 12 }}>ФИО</th>
+                <th style={{ padding: 12 }}>Роль / Организация</th>
+                <th style={{ padding: 12, textAlign: "right" }}>Действия</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((u) => (
+                <tr key={u.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
+                  <td style={{ padding: 12 }}>
+                    <input 
+                      type="checkbox" 
+                      checked={selectedIds.includes(u.id)} 
+                      onChange={(e) => handleSelectOne(u.id, e.target.checked)} 
+                      style={{ cursor: "pointer" }}
+                    />
+                  </td>
+                  <td style={{ padding: 12, color: "#64748b" }}>{u.id}</td>
+                  <td style={{ padding: 12 }}>
+                    {editingId === u.id ? (
+                      <input value={editEmail} onChange={e => setEditEmail(e.target.value)} style={{ padding: "4px 8px", borderRadius: 4, border: "1px solid #cbd5e1", width: "90%" }} />
+                    ) : u.email}
+                  </td>
+                  <td style={{ padding: 12, fontWeight: 500 }}>
+                    {editingId === u.id ? (
+                      <input value={editFullName} onChange={e => setEditFullName(e.target.value)} style={{ padding: "4px 8px", borderRadius: 4, border: "1px solid #cbd5e1", width: "90%" }} />
+                    ) : u.full_name}
+                  </td>
+                  <td style={{ padding: 12 }}>
+                    {editingId === u.id ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <select value={editRole} onChange={e => setEditRole(e.target.value)} style={{ padding: 4, borderRadius: 4 }}>
+                          <option value="parent">Родитель</option>
+                          <option value="school">Школьный администратор</option>
+                          <option value="admin">Системный администратор</option>
+                        </select>
+                        {editRole === "school" && (
+                          <select value={editSchoolId} onChange={e => setEditSchoolId(e.target.value)} style={{ padding: 4, borderRadius: 4, border: "1px solid #3b82f6" }}>
+                            <option value="">— Выберите школу —</option>
+                            {schools.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                          </select>
+                        )}
+                      </div>
+                    ) : (
+                      <span>
+                        {u.role} {u.school_id ? `(Школа ID: ${u.school_id})` : ""}
+                      </span>
+                    )}
+                  </td>
+                  <td style={{ padding: 12, textAlign: "right", whiteSpace: "nowrap" }}>
+                    {editingId === u.id ? (
+                      <>
+                        <button onClick={() => saveEdit(u.id)} style={{ color: "#16a34a", border: "none", background: "none", cursor: "pointer", marginRight: 12, fontWeight: 600 }}>Сохранить</button>
+                        <button onClick={() => setEditingId(null)} style={{ color: "#64748b", border: "none", background: "none", cursor: "pointer" }}>Отмена</button>
+                      </>
+                    ) : (
+                      <>
+                        <button onClick={() => startEdit(u)} style={{ color: "#2563eb", border: "none", background: "none", cursor: "pointer", marginRight: 12 }}>Редактировать</button>
+                        <button onClick={() => remove(u.id)} style={{ color: "#ef4444", border: "none", background: "none", cursor: "pointer" }}>Удалить</button>
+                      </>
+                    )}
+                  </td>
+                </tr>
               ))}
+            </tbody>
+          </table>
+        </div>
+
+        <form onSubmit={submit} style={{ background: "#f8fafc", padding: 20, borderRadius: 12, border: "1px solid #e2e8f0", height: "fit-content" }}>
+          <h4>Добавить пользователя</h4>
+          <div className="form-row" style={{ marginBottom: 10 }}>
+            <label style={{ display: "block", fontSize: 13, fontWeight: 600 }}>Email</label>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #cbd5e1" }} />
+          </div>
+          <div className="form-row" style={{ marginBottom: 10 }}>
+            <label style={{ display: "block", fontSize: 13, fontWeight: 600 }}>Пароль</label>
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #cbd5e1" }} />
+          </div>
+          <div className="form-row" style={{ marginBottom: 10 }}>
+            <label style={{ display: "block", fontSize: 13, fontWeight: 600 }}>ФИО</label>
+            <input value={fullName} onChange={(e) => setFullName(e.target.value)} required style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #cbd5e1" }} />
+          </div>
+          <div className="form-row" style={{ marginBottom: 10 }}>
+            <label style={{ display: "block", fontSize: 13, fontWeight: 600 }}>Роль</label>
+            <select value={role} onChange={(e) => setRole(e.target.value)} style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #cbd5e1" }}>
+              <option value="parent">Родитель</option>
+              <option value="school">Школьный администратор</option>
+              <option value="admin">Системный администратор</option>
             </select>
           </div>
-        )}
-        <button className="btn-primary" type="submit">
-          Создать аккаунт
-        </button>
-      </form>
+          {role === "school" && (
+            <div className="form-row" style={{ marginBottom: 16 }}>
+              <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#2563eb" }}>Привязать к организации (Школе)</label>
+              <select value={selectedSchoolId} onChange={(e) => setSelectedSchoolId(e.target.value)} required style={{ width: "100%", padding: 8, borderRadius: 6, border: "2px solid #3b82f6" }}>
+                <option value="">— Выберите школу из списка —</option>
+                {schools.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+          )}
+          <button type="submit" style={{ width: "100%", padding: "10px", background: "#1e3a8a", color: "white", border: "none", borderRadius: 8, fontWeight: 600, cursor: "pointer" }}>
+            Создать аккаунт
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
