@@ -3,14 +3,14 @@ import codecs
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status, Body
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status, BackgroundTasks
 from sqlalchemy import select, delete
 from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
 from ..models import Role, Student, User
 from ..schemas import DeviceOut, StudentCreate, StudentOut, StudentUpdate
-from ..security import get_current_user, require_roles, hash_password
+from ..security import get_current_user, require_roles, hash_password, generate_temp_password
 
 
 router = APIRouter(prefix="/api/students", tags=["students"])
@@ -79,6 +79,7 @@ def import_students_csv(
     school_id: int | None = None,
     db: Annotated[Session, Depends(get_db)] = None,
     user: Annotated[User, Depends(require_roles(Role.ADMIN.value, Role.SCHOOL.value))] = None,
+    background_tasks: BackgroundTasks = BackgroundTasks(), # Добавили фоновые задачи
 ):
     target_school_id = user.school_id if user.role == Role.SCHOOL.value else school_id
 
@@ -110,8 +111,8 @@ def import_students_csv(
         row_idx = 1
         temp_parents_cache = {}
         
-        # Дефолтный пароль для автоматически создаваемых родителей
-        DEFAULT_PARENT_PASSWORD = hash_password("Mektep12345")
+        # Сюда будем собирать данные для отправки писем: [{"email": "...", "password": "..."}, ...]
+        emails_to_send = []
         
         for row in csv_reader:
             row_idx += 1
@@ -141,17 +142,32 @@ def import_students_csv(
                         temp_parents_cache[parent_email] = parent_id
                     else:
                         try:
+                            # 1. Генерируем уникальный временный текстовый пароль
+                            raw_temp_password = generate_temp_password(10)
+                            # 2. Хешируем его для сохранения в БД
+                            hashed_temp_password = hash_password(raw_temp_password)
+                            
                             new_parent = User(
                                 email=parent_email,
-                                password_hash=DEFAULT_PARENT_PASSWORD,
-                                full_name=f"Родитель ({full_name})",
+                                password_hash=hashed_temp_password,
+                                full_name=f"Родитель ({full_name})", # Временная заглушка, заменят при onboarding
                                 role=Role.PARENT.value,
-                                school_id=None
+                                school_id=None,
+                                must_change_password=True,  # Явно выставляем новые флаги
+                                is_onboarded=False
                             )
                             db.add(new_parent)
                             db.flush()
+                            
                             parent_id = new_parent.id
                             temp_parents_cache[parent_email] = parent_id
+                            
+                            # 3. Сохраняем данные для отправки (только для НОВЫХ родителей)
+                            emails_to_send.append({
+                                "email": parent_email,
+                                "password": raw_temp_password
+                            })
+                            
                         except Exception as e:
                             db.rollback()
                             errors.append(f"Строка {row_idx}: Ошибка БД при создании родителя.")
@@ -175,6 +191,13 @@ def import_students_csv(
         if students_to_add:
             db.add_all(students_to_add)
             db.commit()
+            
+            # --- ФОНОВАЯ ОТПРАВКА ПИСЕМ ---
+            # Когда добавим почтовый сервис, заменим этот цикл на вызов одной функции
+            for item in emails_to_send:
+                print(f"[MAIL SUB] Отправка родителю {item['email']} с временным паролем: {item['password']}")
+                # Здесь будет реальный вызов функции отправки письма, например:
+                # background_tasks.add_task(send_email, to=item['email']
             
         return {
             "status": "success",
