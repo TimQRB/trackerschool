@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
+import secrets
+import string
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -63,3 +65,8 @@ def require_roles(*roles: str):
             raise HTTPException(status_code=403, detail="Forbidden")
         return user
     return checker
+
+def generate_temp_password(length: int = 10) -> str:
+    # Генерирует случайный безопасный пароль из букв и цифр
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(length))

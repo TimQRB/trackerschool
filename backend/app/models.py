@@ -71,6 +71,8 @@ class User(Base):
     fcm_token: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     school_id: Mapped[int | None] = mapped_column(ForeignKey("schools.id"), nullable=True)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_onboarded: Mapped[bool] = mapped_column(Boolean, default=False)
     
     school: Mapped["School | None"] = relationship(back_populates="users")
     students: Mapped[list["Student"]] = relationship(back_populates="parent")
