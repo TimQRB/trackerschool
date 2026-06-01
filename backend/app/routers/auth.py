@@ -19,6 +19,11 @@ def login(payload: LoginRequest, db: Annotated[Session, Depends(get_db)]):
     user = db.execute(select(User).where(User.email == payload.email)).scalar_one_or_none()
     if not user or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Неверный email или пароль")
+    if user.role == "school" and user.school_id is None:
+        raise HTTPException(
+            status_code=403, 
+            detail="Ошибка входа: ваша организация (школа) больше не существует"
+        )
     token = create_access_token(user.id, user.role)
     return TokenResponse(
         access_token=token,

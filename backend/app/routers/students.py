@@ -35,15 +35,16 @@ def list_students(
     user: Annotated[User, Depends(get_current_user)],
 ):
     q = select(Student).options(selectinload(Student.device), selectinload(Student.parent))
+    
     if user.role == Role.PARENT.value:
         q = q.where(Student.parent_id == user.id)
-        
     elif user.role == Role.SCHOOL.value:
         if user.school_id is None:
             return []
         q = q.where(Student.school_id == user.school_id)
+    else:
+        pass
         
-    
     students = db.execute(q).scalars().all()
     return [_to_out(s) for s in students]
 

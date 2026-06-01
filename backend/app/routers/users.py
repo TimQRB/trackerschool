@@ -16,8 +16,11 @@ router = APIRouter(prefix="/api/users", tags=["users"])
 @router.get("", response_model=list[UserOut])
 def list_users(
     db: Annotated[Session, Depends(get_db)],
-    _: Annotated[User, Depends(require_roles(Role.ADMIN.value))],
+    current_user: Annotated[User, Depends(require_roles(Role.ADMIN.value, Role.SCHOOL.value))],
 ):
+    if current_user.role == Role.SCHOOL.value:
+        return db.execute(select(User).where(User.role == Role.PARENT.value)).scalars().all()
+    
     return db.execute(select(User)).scalars().all()
 
 

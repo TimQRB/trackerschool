@@ -2,6 +2,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from ..database import get_db
 from ..models import Role, School, User
@@ -47,6 +48,14 @@ def delete_school(
     school = db.get(School, school_id)
     if not school:
         raise HTTPException(status_code=404, detail="Школа не найдена")
-    db.delete(school)
-    db.commit()
+    
+    try:
+        db.delete(school)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="Нельзя удалить школу, так как к ней привязаны ученики, геозоны или сотрудники. Сначала удалите или перенесите связанные данные."
+        )
     return None

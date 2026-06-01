@@ -21,7 +21,8 @@ export default function Login({ onLogin }: Props) {
       const me = await api.me();
       onLogin(me);
     } catch (e: any) {
-      setErr("Неверный email или пароль");
+      setErr(e.message || "Неверный email или пароль");
+      console.error("Login error:", e);
     } finally {
       setLoading(false);
     }

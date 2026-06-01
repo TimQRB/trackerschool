@@ -106,21 +106,15 @@ export function StudentsTab({ user }: { user: User }) {
       const studs = await api.listStudents();
       setItems(studs);
       
-      const allSchools = await api.listSchools();
-      setSchools(allSchools);
-
       const allUsers = await api.listUsers();
-      if (user.role === "school") {
-        const schoolParents = allUsers.filter(u => 
-          u.role === "parent" && 
-          studs.some(s => s.parent_id === u.id && s.school_id === user.school_id)
-        );
-        setParents(schoolParents);
-      } else {
-        setParents(allUsers.filter(u => u.role === "parent"));
+      setParents(allUsers.filter(u => u.role === "parent"));
+      
+      if (user.role === "admin") {
+        const allSchools = await api.listSchools();
+        setSchools(allSchools);
       }
     } catch (err) {
-      console.error(err);
+      console.error("Ошибка при загрузке данных в табе студентов:", err);
     }
   }
 
@@ -512,8 +506,8 @@ export function SchoolsTab() {
       await api.createSchool({ name, address });
       setName(""); setAddress("");
       load();
-    } catch (err) {
-      alert("Ошибка при создании школы");
+    } catch (err: any) {
+      alert(err.message || "Ошибка при создании школы");
     } finally {
       setLoading(false);
     }
@@ -524,8 +518,9 @@ export function SchoolsTab() {
     try {
       await api.deleteSchool(id);
       load();
-    } catch (err) {
-      alert("Не удалось удалить школу");
+    } catch (err: any) {
+      alert(err.message || "Не удалось удалить школу");
+      console.error("Delete school error:", err);
     }
   }
 

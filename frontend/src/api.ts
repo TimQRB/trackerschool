@@ -89,13 +89,29 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, { ...options, headers });
   if (res.status === 401) {
     localStorage.removeItem("token");
-    window.location.href = "/login";
-    throw new Error("Unauthorized");
+    // Используем replace вместо href, чтобы юзер не мог кнопкой "Назад" вернуться на битый роут
+    window.location.replace("/login"); 
+    throw new Error("Сессия истекла. Пожалуйста, войдите снова.");
   }
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
+    let errorMessage = `HTTP ${res.status}`;
+    try {
+      const errorData = await res.json();
+      if (errorData && errorData.detail) {
+        if (typeof errorData.detail === "string") {
+          errorMessage = errorData.detail;
+        } else if (typeof errorData.detail === "object" && errorData.detail.message) {
+          errorMessage = errorData.detail.message;
+        }
+      }
+    } catch {
+      const text = await res.text().catch(() => "");
+      if (text) errorMessage = text.substring(0, 200);
+    }
+    
+    throw new Error(errorMessage);
   }
+  
   if (res.status === 204) return undefined as T;
   return res.json();
 }
