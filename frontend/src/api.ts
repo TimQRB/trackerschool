@@ -1,6 +1,6 @@
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 export const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:8000";
-
+// Data interfaces
 export interface User {
   id: number;
   email: string;
@@ -98,7 +98,7 @@ export interface AtLogEntry {
   success: boolean;
   created_at: string;
 }
-
+// Response interfaces
 export interface BaseResponse {
   status: string;
   message: string;
@@ -109,6 +109,8 @@ export interface LoginResponse {
   role: string;
   full_name: string;
   user_id: number;
+  must_change_password: boolean;
+  is_onboarded: boolean;
 }
 
 export interface LocateNowResponse {
@@ -123,7 +125,7 @@ export interface RemoteCommandResponse {
   imei: string;
   command: string;
 }
-
+//  Dto interfaces for creating/updating entities
 export interface CreateStudentDto {
   full_name: string;
   class_name: string;
@@ -246,6 +248,15 @@ export const api = {
       "/api/auth/login",
       { method: "POST", body: JSON.stringify({ email, password }) },
     ),
+
+  completeOnboarding: (fullName: string, newPassword: string) =>
+    request<{ status: string; detail: string }>("/api/auth/complete-onboarding", {
+      method: "POST",
+      body: JSON.stringify({
+        full_name: fullName,
+        new_password: newPassword,
+      }),
+    }),
     
   me: () => request<User>("/api/auth/me"),
 

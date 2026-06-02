@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom"; // Импортируем навигацию
 import { api, setToken, User } from "../api";
 
 interface Props {
@@ -10,14 +11,25 @@ export default function Login({ onLogin }: Props) {
   const [password, setPassword] = useState("admin123");
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const navigate = useNavigate(); // Инициализируем хук
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
     setLoading(true);
     try {
+      // 1. Делаем логин и получаем токены + флаги
       const res = await api.login(email, password);
       setToken(res.access_token);
+
+      // 2. Проверяем, нужно ли принудительно сменить пароль
+      if (res.must_change_password) {
+        // Уходим на страницу онбординга и не пускаем в главное приложение
+        navigate("/onboarding");
+        return;
+      }
+
+      // 3. Если менять не нужно — стандартный вход
       const me = await api.me();
       onLogin(me);
     } catch (e: any) {
