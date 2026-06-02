@@ -21,6 +21,10 @@ class TokenResponse(BaseModel):
     must_change_password: bool
     is_onboarded: bool
 
+class CompleteOnboardingRequest(BaseModel):
+    full_name: str = Field(..., min_length=2, description="Новое ФИО родителя")
+    new_password: str = Field(..., min_length=6, description="Новый постоянный пароль")
+
 # --- Schools ---
 
 class SchoolCreate(BaseModel):

@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import User
-from ..schemas import LoginRequest, TokenResponse, UserOut
-from ..security import create_access_token, get_current_user, verify_password
+from ..schemas import LoginRequest, TokenResponse, UserOut, CompleteOnboardingRequest
+from ..security import create_access_token, get_current_user, verify_password, hash_password
 
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -48,6 +48,36 @@ def swagger_login(
     return {
         "access_token": token,
         "token_type": "bearer"
+    }
+
+@router.post("/complete-onboarding")
+def complete_onboarding(
+    payload: CompleteOnboardingRequest,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)]
+):
+    # Эндпоинт для завершения онбординга родителя.
+    # Обновляет ФИО, меняет временный пароль на постоянный и сбрасывает флаги безопасности.
+    
+    # 1. Хешируем новый пароль родителя
+    current_user.password_hash = hash_password(payload.new_password)
+    
+    # 2. Обновляем ФИО на настоящее
+    current_user.full_name = payload.full_name
+    
+    # 3. Меняем флаги: пароль изменен, онбординг пройден
+    current_user.must_change_password = False
+    current_user.is_onboarded = True
+    
+    # 4. Сохраняем изменения в базе данных
+    db.commit()
+    db.refresh(current_user)
+    
+    return {
+        "status": "success",
+        "detail": "Онбординг успешно завершен. Профиль обновлен.",
+        "full_name": current_user.full_name,
+        "is_onboarded": current_user.is_onboarded
     }
 
 @router.get("/me", response_model=UserOut)
