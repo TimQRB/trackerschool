@@ -37,21 +37,39 @@ export default function App() {
         path="/login"
         element={user ? <Navigate to="/" /> : <Login onLogin={setUser} />}
       />
-      <Route path="/onboarding" element={<Onboarding onLogin={setUser} />} />
+      <Route
+        path="/onboarding"
+        element={
+          // 1. Если пользователь вообще не залогинен — отправляем на вход
+          !user ? (
+            <Navigate to="/login" />
+          ) : 
+          // 2. Если он залогинен и УЖЕ прошел онбординг — отправляем на главную
+          user.is_onboarded ? (
+            <Navigate to="/" />
+          ) : (
+            // 3. Только если он залогинен, но еще не прошел онбординг — показываем страницу
+            <Onboarding onLogin={setUser} />
+          )
+        }
+      />
       <Route
         path="/"
         element={
-          user ? (
-            <Dashboard user={user} onLogout={handleLogout} />
-          ) : (
+          !user ? (
             <Navigate to="/login" />
+          ) : user.is_onboarded === false ? ( // Если это новый родитель, который не прошел онбординг
+            <Navigate to="/onboarding" />
+          ) : (
+            <Dashboard user={user} onLogout={handleLogout} />
           )
         }
       />
       <Route
         path="/admin"
         element={
-          user && (user.role === "admin" || user.role === "school") ? (
+          // Сюда пускаем только если юзер залогинен И он не находится в процессе онбординга
+          user && user.is_onboarded !== false && (user.role === "admin" || user.role === "school") ? (
             <Admin user={user} onLogout={handleLogout} />
           ) : (
             <Navigate to="/" />

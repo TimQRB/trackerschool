@@ -7,6 +7,8 @@ export interface User {
   full_name: string;
   role: "parent" | "school" | "admin";
   school_id: number | null;
+  is_onboarded: boolean;
+  must_change_password: boolean;
 }
 
 export interface Device {

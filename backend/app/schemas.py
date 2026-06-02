@@ -60,7 +60,9 @@ class UserOut(BaseModel):
     email: str
     full_name: str
     role: str
-    school_id: int | None = None
+    school_id: int | None
+    must_change_password: bool
+    is_onboarded: bool
 
     class Config:
         from_attributes = True

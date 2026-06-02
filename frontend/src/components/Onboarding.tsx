@@ -39,6 +39,8 @@ export default function Onboarding({ onLogin }: Props) {
       
       // 3. Авторизуем в основном приложении
       onLogin(me);
+
+      navigate("/", { replace: true });
       
       // 4. Редиректим на главную страницу / дашборд
       navigate("/");
