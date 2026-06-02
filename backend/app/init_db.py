@@ -24,6 +24,8 @@ def init() -> None:
         conn.execute(text("ALTER TABLE devices ADD COLUMN IF NOT EXISTS dev_type VARCHAR(16)"))
         conn.execute(text("ALTER TABLE devices ADD COLUMN IF NOT EXISTS model_name VARCHAR(32)"))
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS fcm_token VARCHAR(512)"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT TRUE"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_onboarded BOOLEAN DEFAULT FALSE"))        
         conn.commit()
 
     db = SessionLocal()

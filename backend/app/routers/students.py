@@ -11,6 +11,7 @@ from ..database import get_db
 from ..models import Role, Student, User
 from ..schemas import DeviceOut, StudentCreate, StudentOut, StudentUpdate
 from ..security import get_current_user, require_roles, hash_password, generate_temp_password
+from ..mail_service import send_onboarding_email
 
 
 router = APIRouter(prefix="/api/students", tags=["students"])
@@ -193,11 +194,9 @@ def import_students_csv(
             db.commit()
             
             # --- ФОНОВАЯ ОТПРАВКА ПИСЕМ ---
-            # Когда добавим почтовый сервис, заменим этот цикл на вызов одной функции
             for item in emails_to_send:
-                print(f"[MAIL SUB] Отправка родителю {item['email']} с временным паролем: {item['password']}")
-                # Здесь будет реальный вызов функции отправки письма, например:
-                # background_tasks.add_task(send_email, to=item['email']
+                # Добавляем задачу в фон. FastAPI сам выполнит её после отправки ответа админу
+                background_tasks.add_task(send_onboarding_email, item['email'], item['password'])
             
         return {
             "status": "success",

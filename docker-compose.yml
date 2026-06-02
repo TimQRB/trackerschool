@@ -20,6 +20,8 @@ services:
 
   backend:
     build: ./backend
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql+psycopg://safemektep:safemektep@db:5432/safemektep
       REDIS_URL: redis://redis:6379/0

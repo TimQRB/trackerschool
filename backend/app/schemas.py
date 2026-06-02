@@ -18,6 +18,8 @@ class TokenResponse(BaseModel):
     full_name: str
     user_id: int
     school_id: int | None = None
+    must_change_password: bool
+    is_onboarded: bool
 
 # --- Schools ---
 

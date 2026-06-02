@@ -13,3 +13,4 @@ python-multipart==0.0.9
 redis==5.0.8
 firebase-admin==6.6.0
 pyserial==3.5
+fastapi-mail==1.4.1

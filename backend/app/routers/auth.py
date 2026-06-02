@@ -30,7 +30,9 @@ def login(payload: LoginRequest, db: Annotated[Session, Depends(get_db)]):
         role=user.role,
         full_name=user.full_name,
         user_id=user.id,
-        school_id=user.school_id
+        school_id=user.school_id,
+        must_change_password=user.must_change_password,
+        is_onboarded=user.is_onboarded
     )
 
 @router.post("/swagger-login", include_in_schema=False)
